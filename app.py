@@ -414,17 +414,46 @@ def delete_pdf(plano_id):
         app.logger.error(f"Error eliminando plano ID {plano_id}: {e}", exc_info=True)
     return redirect(url_for('list_pdfs'))
 
-if __name__ == '__main__':
-    if R2_CONFIG_MISSING: print("ADVERTENCIA: Faltan configuraciones R2.")
-    with app.app_context():
-        db.create_all()
-        inicializar_fts()
-        if not User.query.filter_by(username='admin').first():
-            try: admin_user = User(username='admin', role='admin'); admin_user.set_password('admin123'); db.session.add(admin_user); db.session.commit(); print("Admin creado.")
-            except Exception as e: db.session.rollback(); print(f"Error creando admin: {e}")
-        if not User.query.filter_by(username='usuario').first():
-            try: consultor_user = User(username='usuario', role='consultor'); consultor_user.set_password('eimisa'); db.session.add(consultor_user); db.session.commit(); print("Usuario 'usuario' creado.")
-            except Exception as e: db.session.rollback(); print(f"Error creando 'usuario': {e}")
-        print("Tablas de BD verificadas/creadas (incluyendo FTS).")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+# ... (todas tus rutas y funciones) ...
 
+# --- INICIALIZACIÓN DE LA BASE DE DATOS AL CARGAR LA APP ---
+# Este bloque se ejecutará cuando Gunicorn importe 'app'
+with app.app_context():
+    db.create_all()
+    inicializar_fts() # Asegúrate que esta función también maneje la creación idempotente
+    
+    # Crear usuario admin por defecto si no existe
+    if not User.query.filter_by(username='admin').first():
+        try:
+            admin_user = User(username='admin', role='admin')
+            admin_user.set_password('admin123') # ¡CAMBIAR ESTA CONTRASEÑA EN UN ENTORNO REAL!
+            db.session.add(admin_user)
+            db.session.commit()
+            print("Usuario 'admin' por defecto creado (o ya existía).")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error al crear usuario admin por defecto: {e}")
+
+    # Crear el nuevo usuario "usuario" por defecto si no existe
+    if not User.query.filter_by(username='usuario').first():
+        try:
+            consultor_user = User(username='usuario', role='consultor')
+            consultor_user.set_password('eimisa') # Contraseña definida
+            db.session.add(consultor_user)
+            db.session.commit()
+            print("Usuario 'usuario' (consultor) por defecto creado (o ya existía).")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error al crear usuario 'usuario' por defecto: {e}")
+    
+    print("Contexto de aplicación inicializado: Tablas de BD y FTS verificadas/creadas, usuarios por defecto asegurados.")
+# --- FIN DE INICIALIZACIÓN ---
+
+if __name__ == '__main__':
+    # El bloque if __name__ == '__main__' solo se usa para desarrollo local
+    if R2_CONFIG_MISSING: 
+        print("ADVERTENCIA LOCAL: Faltan configuraciones R2.")
+    # La inicialización de la BD ya ocurrió arriba cuando se importó el módulo.
+    # No es necesario repetirla aquí, pero el app.app_context() no hace daño.
+    print("Iniciando servidor de desarrollo Flask local...")
+    app.run(debug=True, host='0.0.0.0', port=5000)
