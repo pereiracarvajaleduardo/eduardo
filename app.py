@@ -427,3 +427,4 @@ if __name__ == '__main__':
             except Exception as e: db.session.rollback(); print(f"Error creando 'usuario': {e}")
         print("Tablas de BD verificadas/creadas (incluyendo FTS).")
     app.run(debug=True, host='0.0.0.0', port=5000)
+
