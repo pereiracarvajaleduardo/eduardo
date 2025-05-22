@@ -304,7 +304,6 @@ def view_pdf(object_key):
     except Exception as e: flash(f"Error enlace: {str(e)}", "danger"); app.logger.error(f"Error URL: {e}", exc_info=True)
     return redirect(url_for('list_pdfs'))
 
-# --- NUEVA RUTA PARA EDITAR PLANOS ---
 @app.route('/plano/edit/<int:plano_id>', methods=['GET', 'POST'])
 @login_required
 def edit_plano(plano_id):
@@ -388,8 +387,8 @@ def edit_plano(plano_id):
             db.session.rollback()
             flash(f"Error al actualizar el plano: {str(e)}", "danger")
             app.logger.error(f"Error editando plano ID {plano_id}: {e}", exc_info=True)
-            plano_original_db = db.session.get(Plano, plano_id) 
-            return render_template('edit_plano.html', plano=plano_original_db)
+            plano_recargado = db.session.get(Plano, plano_id) if db.session.get(Plano, plano_id) else plano_a_editar
+            return render_template('edit_plano.html', plano=plano_recargado)
 
     return render_template('edit_plano.html', plano=plano_a_editar)
 
