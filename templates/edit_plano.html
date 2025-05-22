@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Editar Plano - {{ plano.codigo_plano }}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h2>Editar Plano: {{ plano.codigo_plano }} (Revisión Actual: {{ plano.revision }})</h2>
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('edit_plano', plano_id=plano.id) }}">
+            <div class="mb-3">
+                <label for="codigo_plano_display" class="form-label">Código del Plano (No editable)</label>
+                <input type="text" class="form-control" id="codigo_plano_display" name="codigo_plano_display" value="{{ plano.codigo_plano }}" readonly>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="revision" class="form-label">Nueva Revisión (*)</label>
+                    <input type="text" class="form-control" id="revision" name="revision" value="{{ plano.revision }}" required>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="area" class="form-label">Nueva Área (*)</label>
+                    <input type="text" class="form-control" id="area" name="area" value="{{ plano.area }}" required>
+                    {% if plano.area == "Area_MR_Pendiente" %}
+                        <small class="form-text text-muted">Esta área fue asignada por defecto. Por favor, corrígela.</small>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="mb-3">
+                <label for="descripcion" class="form-label">Nueva Descripción (Opcional)</label>
+                <textarea class="form-control" id="descripcion" name="descripcion" rows="3">{{ plano.descripcion if plano.descripcion else '' }}</textarea>
+            </div>
+             <div class="mb-3">
+                <label for="nombre_archivo_original_display" class="form-label">Nombre Archivo Original (Informativo)</label>
+                <input type="text" class="form-control" id="nombre_archivo_original_display" name="nombre_archivo_original_display" value="{{ plano.nombre_archivo_original }}" readonly>
+            </div>
+             <div class="mb-3">
+                <label for="r2_object_key_display" class="form-label">Ruta actual en R2 (Informativo)</label>
+                <input type="text" class="form-control" id="r2_object_key_display" name="r2_object_key_display" value="{{ plano.r2_object_key }}" readonly>
+            </div>
+            <hr>
+            <button type="submit" class="btn btn-success">Guardar Cambios</button>
+            <a href="{{ url_for('list_pdfs') }}" class="btn btn-secondary">Cancelar</a>
+        </form>
+        <p class="mt-2"><small>(*) Campos obligatorios.</small></p>
+    </div>
+</div>
+{% endblock %}

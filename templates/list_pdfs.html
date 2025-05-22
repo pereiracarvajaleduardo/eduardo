@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Lista de Planos PDF{% endblock %}
+
+{% block content %}
+<div class="card mb-4">
+    <div class="card-header">Buscar Planos</div>
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('list_pdfs') }}">
+            <div class="row g-2 mb-3">
+                <div class="col-md-4">
+                    <input type="text" class="form-control form-control-sm" name="q_codigo" placeholder="Buscar por Código del Plano..." value="{{ request.args.get('q_codigo', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control form-control-sm" name="q_area" placeholder="Buscar por Área..." value="{{ request.args.get('q_area', '') }}">
+                </div>
+                <div class="col-md-3">
+                    <input type="text" class="form-control form-control-sm" name="q_contenido" placeholder="Buscar en Contenido PDF..." value="{{ request.args.get('q_contenido', '') }}">
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary btn-sm w-100">Buscar</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2>Planos PDF Registrados</h2>
+    </div>
+    <div class="card-body">
+        {% if planos %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-sm"> {# table-sm para más compacta #}
+                    <thead>
+                        <tr>
+                            <th>Código del Plano</th>
+                            <th>Revisión</th>
+                            <th>Área</th>
+                            <th>Archivo Original</th>
+                            <th>Fecha Subida</th>
+                            <th>Descripción</th>
+                            <th>Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for plano_item in planos %}
+                        <tr>
+                            <td>{{ plano_item.codigo_plano }}</td>
+                            <td>{{ plano_item.revision }}</td>
+                            <td>{{ plano_item.area }}</td>
+                            <td>{{ plano_item.nombre_archivo_original }}</td>
+                            <td>{{ plano_item.fecha_subida.strftime('%Y-%m-%d %H:%M') if plano_item.fecha_subida else 'N/A' }}</td>
+                            <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>
+                            <td>
+                                <a href="{{ url_for('view_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-outline-primary mb-1 d-block" target="_blank">Ver/Descargar</a>
+                                
+                                {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
+                                <a href="{{ url_for('edit_plano', plano_id=plano_item.id) }}" class="btn btn-sm btn-outline-secondary mb-1 d-block">Editar</a> {# <--- NUEVO BOTÓN #}
+                                
+                                <form action="{{ url_for('delete_pdf', plano_id=plano_item.id) }}" method="POST" style="display: inline;"
+                                      onsubmit="return confirm('¿Estás seguro de que quieres eliminar este plano? Esta acción no se puede deshacer.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger d-block w-100">Eliminar</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-center">No se encontraron planos con los criterios actuales o no hay planos registrados.</p>
+        {% endif %}
+
+        <div class="mt-3">
+            {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
+             <a href="{{ url_for('upload_pdf') }}" class="btn btn-primary">Subir Nuevo PDF</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

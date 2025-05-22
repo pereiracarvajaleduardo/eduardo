@@ -1,0 +1,11 @@
+Flask-CORS>=6.0.0
+Flask>=3.1.1
+boto3>=1.38.18
+python-dotenv>=1.1.0
+Flask-SQLAlchemy>=3.1.1
+pdfplumber>=0.10
+packaging>=23.2,<25
+Flask-Login>=0.6.3 # <--- AÑADIR/ASEGURAR ESTA LÍNEA
+# psycopg2-binary # Añade esto si decides usar PostgreSQL en Render
+gunicorn>=20.0
+Werkzeug>=3.1.3     # <--- ASEGURAR ESTA LÍNEA (para hash de contraseñas)0

@@ -1,0 +1,74 @@
+# Entornos Virtuales
+venv/
+.venv/
+env/
+ENV/
+*/activate
+activate
+
+# Archivos compilados de Python
+*.py[cod]
+*$py.class
+__pycache__/
+*.so
+
+# Archivos de configuración local y secretos
+.env
+*.env
+instance/
+config.py
+secrets.py
+credentials.json
+*.pem
+
+# Bases de datos SQLite locales
+# Si quieres que tu DB inicial SÍ se suba a Git para el primer despliegue en Render (para tener datos de prueba),
+# comenta temporalmente la siguiente línea. Pero para producción real con una BD gestionada,
+# no deberías subir tu archivo .db local.
+*.db
+*.sqlite
+*.sqlite3
+# planos_database.db 
+
+# Archivos de log
+*.log
+logs/
+
+# Archivos de IDEs y editores
+.vscode/
+.idea/
+*.project
+*.sublime-project
+*.sublime-workspace
+nbproject/
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Archivos de dependencias de construcción de Python
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Cobertura de pruebas
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# Archivos de Jupyter Notebook (si los usaras)
+.ipynb_checkpoints
+
+# Archivos específicos de Windows
+*.~
+*._*
+
+# Archivos específicos de macOS
+.Spotlight-V100
+.Trashes
+ehthumbs.db
