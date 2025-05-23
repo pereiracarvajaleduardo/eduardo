@@ -74,30 +74,45 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 from botocore.client import Config  
-
-# --- Funciones Auxiliares ---
-
 def get_s3_client():
-    """
-    Crea y retorna un cliente boto3 configurado para Cloudflare R2.
-    Retorna None si la configuración es incorrecta o falla la creación.
-    """
-    # Esta comprobación ya la tienes y está bien
-    if R2_CONFIG_MISSING:
-        app.logger.error("Faltan variables de configuración para R2. No se puede crear el cliente S3.")
+    app.logger.info("--- INICIANDO DEPURACIÓN DETALLADA DE get_s3_client ---")
+
+    # Obtenemos las variables de entorno
+    account_id = os.getenv('R2_ACCOUNT_ID')
+    access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+    secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+    endpoint_url = os.getenv('R2_ENDPOINT_URL')
+
+    if not endpoint_url and account_id:
+        endpoint_url = f'https://{account_id}.r2.cloudflarestorage.com'
+
+    # Imprimimos todo para la depuración
+    app.logger.info(f"ACCOUNT_ID: {account_id} (Tipo: {type(account_id)}, Longitud: {len(account_id) if account_id else 0})")
+    app.logger.info(f"ACCESS_KEY_ID: {access_key_id} (Tipo: {type(access_key_id)}, Longitud: {len(access_key_id) if access_key_id else 0})")
+    app.logger.info(f"SECRET_ACCESS_KEY: {secret_access_key} (Tipo: {type(secret_access_key)}, Longitud: {len(secret_access_key) if secret_access_key else 0})") # ADVERTENCIA: CLAVE SECRETA EN LOGS
+    app.logger.info(f"ENDPOINT_URL: {endpoint_url} (Tipo: {type(endpoint_url)}, Longitud: {len(endpoint_url) if endpoint_url else 0})")
+
+    if not all([account_id, access_key_id, secret_access_key, endpoint_url]):
+        app.logger.error("UNA O MÁS VARIABLES DE ENTORNO FALTAN. No se puede crear el cliente.")
         return None
-    
+
     try:
-        # La única diferencia es añadir el parámetro 'config'
+        app.logger.info("Intentando crear cliente Boto3 con la configuración impresa arriba...")
         client = boto3.client(
             's3',
-            endpoint_url=R2_ENDPOINT_URL,
-            aws_access_key_id=R2_ACCESS_KEY_ID,
-            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            config=Config(signature_version='s3v4'),  # <-- LA CORRECCIÓN CLAVE
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            config=Config(signature_version='s3v4'),
             region_name='auto'
         )
+        app.logger.info("Cliente Boto3 CREADO exitosamente en memoria.")
+        app.logger.info("--- FIN DE DEPURACIÓN DETALLADA ---")
         return client
+    except Exception as e:
+        app.logger.error(f"FALLO al crear el cliente Boto3: {e}", exc_info=True)
+        app.logger.info("--- FIN DE DEPURACIÓN DETALLADA (CON ERROR) ---")
+        return None
     except Exception as e:
         app.logger.error(f"Error al crear el cliente S3 para R2: {e}")
         return None
