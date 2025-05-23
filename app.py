@@ -72,11 +72,34 @@ class Plano(db.Model):
 def load_user(user_id):
     return db.session.get(User, int(user_id))
 
+from botocore.client import Config  
+
 # --- Funciones Auxiliares ---
+
 def get_s3_client():
-    if R2_CONFIG_MISSING: app.logger.error("Faltan config R2."); return None
-    try: return boto3.client('s3', endpoint_url=R2_ENDPOINT_URL, aws_access_key_id=R2_ACCESS_KEY_ID, aws_secret_access_key=R2_SECRET_ACCESS_KEY, region_name='auto')
-    except Exception as e: app.logger.error(f"Error cliente S3: {e}"); return None
+    """
+    Crea y retorna un cliente boto3 configurado para Cloudflare R2.
+    Retorna None si la configuración es incorrecta o falla la creación.
+    """
+    # Esta comprobación ya la tienes y está bien
+    if R2_CONFIG_MISSING:
+        app.logger.error("Faltan variables de configuración para R2. No se puede crear el cliente S3.")
+        return None
+    
+    try:
+        # La única diferencia es añadir el parámetro 'config'
+        client = boto3.client(
+            's3',
+            endpoint_url=R2_ENDPOINT_URL,
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            config=Config(signature_version='s3v4'),  # <-- LA CORRECCIÓN CLAVE
+            region_name='auto'
+        )
+        return client
+    except Exception as e:
+        app.logger.error(f"Error al crear el cliente S3 para R2: {e}")
+        return None
 
 def clean_for_path(text):
     if not text: return "sin_especificar"
