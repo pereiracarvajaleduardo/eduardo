@@ -315,8 +315,63 @@ def upload_pdf():
 @app.route('/pdfs')
 @login_required
 def list_pdfs():
-    # (Tu lógica de la ruta /pdfs aquí, sin cambios)
-    pass
+    try:
+        query_codigo = request.args.get('q_codigo', '').strip()
+        query_area = request.args.get('q_area', '').strip()
+        query_contenido = request.args.get('q_contenido', '').strip()
+
+        app.logger.info(f"Buscando con Código: '{query_codigo}', Área: '{query_area}', Contenido: '{query_contenido}'")
+
+        final_query = Plano.query # Empiezas con todos los planos
+
+        if query_codigo:
+            app.logger.info(f"Filtro código: %{query_codigo}%")
+            final_query = final_query.filter(Plano.codigo_plano.ilike(f'%{query_codigo}%'))
+
+        if query_area:
+            app.logger.info(f"Filtro área: %{query_area}%")
+            final_query = final_query.filter(Plano.area.ilike(f'%{query_area}%'))
+
+        planos_db = [] # Inicializa como lista vacía
+
+        if query_contenido:
+            terminos_fts = " ".join([f"{palabra.strip()}*" for palabra in query_contenido.split() if palabra.strip()])
+            if not terminos_fts:
+                app.logger.info("Término de búsqueda FTS vacío, no se aplicará filtro FTS.")
+                # Si no hay término FTS, simplemente ejecuta la consulta acumulada hasta ahora
+                planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
+            else:
+                app.logger.info(f"Término FTS para la búsqueda: '{terminos_fts}'")
+                sql_fts = db.text("SELECT plano_id FROM plano_fts WHERE plano_fts MATCH :termino ORDER BY rank")
+
+                with db.engine.connect() as conn:
+                    result = conn.execute(sql_fts, {"termino": terminos_fts})
+
+                ids_encontrados_fts = [row[0] for row in result]
+
+                if not ids_encontrados_fts:
+                    app.logger.info("La búsqueda FTS no devolvió IDs. No se mostrarán resultados basados en contenido.")
+                    planos_db = [] # No hay resultados si FTS es el único filtro y no devuelve nada
+                else:
+                    app.logger.info(f"IDs encontrados por FTS: {ids_encontrados_fts}")
+                    # Combina los IDs de FTS con los filtros anteriores
+                    final_query = final_query.filter(Plano.id.in_(ids_encontrados_fts))
+                    planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
+        else:
+            # Si no hay búsqueda por contenido, ejecuta la consulta con los filtros de código y área
+            planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
+
+        app.logger.info(f"Número de planos finales encontrados: {len(planos_db)}")
+        if planos_db:
+            app.logger.info(f"Primer plano en la lista: {planos_db[0].codigo_plano}")
+
+    except Exception as e:
+        flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
+        app.logger.error(f"Error en la ruta /pdfs: {e}", exc_info=True)
+        planos_db = [] # En caso de error, devuelve una lista vacía
+
+    # Esta es la línea crucial que devuelve la respuesta a Flask
+    return render_template('list_pdfs.html', planos=planos_db, R2_OBJECT_PREFIX=R2_OBJECT_PREFIX)
 
 @app.route('/pdfs/view/<path:object_key>')
 @login_required
