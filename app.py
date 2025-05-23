@@ -1,10 +1,10 @@
-# === VERSIÓN FINAL Y FUNCIONAL1 ===
+# === VERSIÓN FINAL Y FUNCIONAL ===
 import os
 import re
 from datetime import datetime, timezone
 import boto3
 from botocore.client import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError # Asegúrate que esta línea esté
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
@@ -117,14 +117,13 @@ def extraer_area_del_pdf(pdf_file_stream):
                 app.logger.warning("El PDF subido no tiene páginas.")
                 return None
             
-            page = pdf.pages[0]
+            page = pdf.pages[0] # Solo procesa la primera página para el área
             pw, ph = page.width, page.height
             
-            # Definir la caja de búsqueda (bounding box) en la parte inferior derecha
             bbox = (pw * 0.40, ph * 0.65, pw * 0.98, ph * 0.98)
             
             if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
-                app.logger.error(f"Bounding box inválido generado: {bbox}")
+                app.logger.error(f"Bounding box inválido generado para extracción de área: {bbox}")
                 return None
             
             region_recortada = page.crop(bbox)
@@ -132,16 +131,12 @@ def extraer_area_del_pdf(pdf_file_stream):
             
             if texto:
                 txt_upper = texto.upper()
-                if "WSA" in txt_upper:
-                    area_encontrada = "WSA"
-                elif "SWS" in txt_upper:
-                    area_encontrada = "SWS"
-                
+                if "WSA" in txt_upper: area_encontrada = "WSA"
+                elif "SWS" in txt_upper: area_encontrada = "SWS"
                 log_msg = f"Área extraída: {area_encontrada}" if area_encontrada else "No se encontró 'SWS' o 'WSA' en el texto del cajetín."
-                app.logger.info(f"{log_msg}. Texto encontrado (500c): {texto[:500]}...")
+                app.logger.info(f"{log_msg}. Texto encontrado (primeros 500c): {texto[:500]}...")
             else:
                 app.logger.info("No se pudo extraer texto del área del cajetín para determinar el área.")
-                
     except Exception as e:
         app.logger.error(f"Error crítico durante la extracción del área del PDF: {e}", exc_info=True)
     finally:
@@ -149,22 +144,29 @@ def extraer_area_del_pdf(pdf_file_stream):
             pdf_file_stream.seek(0)
     return area_encontrada
 
-def extraer_texto_completo_pdf(pdf_file_stream):
+def extraer_texto_completo_pdf(pdf_file_stream, max_paginas=6): # Límite de páginas añadido
     texto_completo = []
     try:
         if hasattr(pdf_file_stream, 'seek') and callable(pdf_file_stream.seek):
             pdf_file_stream.seek(0)
+        
         with pdfplumber.open(pdf_file_stream) as pdf:
-            for i, page in enumerate(pdf.pages):
+            num_paginas_a_procesar = min(len(pdf.pages), max_paginas)
+            app.logger.info(f"Procesando {num_paginas_a_procesar} páginas para FTS (límite: {max_paginas}). Total páginas PDF: {len(pdf.pages)}")
+
+            for i in range(num_paginas_a_procesar):
+                page = pdf.pages[i]
                 texto_pagina = page.extract_text(x_tolerance=2, y_tolerance=2)
                 if texto_pagina:
                     texto_completo.append(texto_pagina)
-                app.logger.debug(f"Texto extraído para FTS pág {i+1} (primeros 100c): {texto_pagina[:100] if texto_pagina else 'Ninguno'}")
+                # El log puede ser muy verboso, considera reducirlo o cambiar el nivel a DEBUG si no es necesario siempre
+                # app.logger.debug(f"Texto extraído para FTS pág {i+1} (primeros 100c): {texto_pagina[:100] if texto_pagina else 'Ninguno'}")
     except Exception as e:
         app.logger.error(f"Error extrayendo el texto completo del PDF para FTS: {e}", exc_info=True)
     finally:
         if hasattr(pdf_file_stream, 'seek') and callable(pdf_file_stream.seek):
             pdf_file_stream.seek(0)
+            
     return "\n".join(texto_completo)
     
 def inicializar_fts():
@@ -190,10 +192,7 @@ def inicializar_fts():
 
 def actualizar_indice_fts_session(plano_id_val, codigo_plano_val, area_val, descripcion_val, contenido_pdf_val):
     try:
-        # Primero elimina la entrada antigua para evitar duplicados
         db.session.execute(db.text("DELETE FROM plano_fts WHERE plano_id = :plano_id;"), {"plano_id": plano_id_val})
-        
-        # Luego inserta la nueva entrada con el contenido actualizado
         db.session.execute(db.text("""
             INSERT INTO plano_fts (plano_id, codigo_plano, area, descripcion, contenido_pdf)
             VALUES (:plano_id, :codigo_plano, :area, :descripcion, :contenido_pdf);
@@ -251,156 +250,186 @@ def index():
     return render_template('index.html')
 
 @app.route('/upload', methods=['GET', 'POST'])
-
 @login_required
-
 def upload_pdf():
-
-  if current_user.role not in ['admin', 'cargador']:
+    if current_user.role not in ['admin', 'cargador']:
         flash('No tienes permiso.', 'danger')
         return redirect(url_for('index'))
-
-  if R2_CONFIG_MISSING: flash("Subida deshabilitada.", "danger"); return redirect(url_for('index'))
-
-  if request.method == 'POST':
-
-    pdf_file = request.files.get('pdf_file'); codigo_plano_form = request.form.get('codigo_plano', '').strip()
-
-    revision_form = request.form.get('revision', '').strip(); area_form = request.form.get('area', '').strip()
-
-    descripcion_form = request.form.get('descripcion', '').strip()
-
-    if not pdf_file or not codigo_plano_form or not revision_form: flash('Campos obligatorios: Archivo, Código, Revisión.', 'warning'); return redirect(request.url)
-
-    if not pdf_file.filename.lower().endswith('.pdf'): flash('Sólo PDF.', 'warning'); return redirect(request.url)
-
-    area_final_determinada = None; es_mr = codigo_plano_form.upper().startswith("K484-0000-0000-MR-")
-
-    if es_mr:
-
-      if area_form: area_final_determinada = area_form; app.logger.info(f"MR. Área manual: '{area_final_determinada}'")
-
-      else:
-
-        app.logger.info(f"MR '{codigo_plano_form}' sin área. Extrayendo...");
-
-        if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
-
-        area_extraida = extraer_area_del_pdf(pdf_file.stream)
-
-        if area_extraida: area_final_determinada = area_extraida; flash(f"Área '{area_final_determinada}' detectada de PDF.", "info")
-
-        else: area_final_determinada = "Area_MR_Pendiente"; flash(f"No se extrajo área. Usando '{area_final_determinada}'.", "warning")
-
-    else:
-
-      if area_form: area_final_determinada = area_form
-
-      else: flash('Campo "Área" obligatorio.', 'warning'); return redirect(request.url)
-
-    if area_final_determinada is None: flash('Error: No se pudo determinar Área.', 'danger'); app.logger.error("CRÍTICO: area_final es None."); return redirect(request.url)
-
-   
-
-    original_filename_secure = secure_filename(pdf_file.filename)
-
-    cleaned_area = clean_for_path(area_final_determinada); cleaned_codigo = clean_for_path(codigo_plano_form)
-
-    cleaned_revision = clean_for_path(revision_form)
-
-    r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision}.pdf"; r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
-
-    s3 = get_s3_client()
-
-    if not s3: flash("Error R2.", "danger"); return redirect(request.url)
-
-    try:
-
-      planos_existentes_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_form).all()
-
-      plano_para_actualizar_o_crear = None; eliminar_objetos_r2_y_db = []
-
-      if not planos_existentes_mismo_codigo:
-
-        app.logger.info(f"Creando primer plano: {codigo_plano_form} Rev {revision_form}")
-
-        plano_para_actualizar_o_crear = Plano(codigo_plano=codigo_plano_form, revision=revision_form, area=area_final_determinada, nombre_archivo_original=original_filename_secure, r2_object_key=r2_object_key_nuevo, descripcion=descripcion_form)
-
-      else:
-
-        revision_actual_mas_alta_db_str = None; plano_con_revision_ingresada = None
-
-        for p_existente in planos_existentes_mismo_codigo:
-
-          if p_existente.revision == revision_form: plano_con_revision_ingresada = p_existente
-
-          if revision_actual_mas_alta_db_str is None or es_revision_mas_nueva(p_existente.revision, revision_actual_mas_alta_db_str):
-
-            revision_actual_mas_alta_db_str = p_existente.revision
-
-        if plano_con_revision_ingresada:
-
-          plano_para_actualizar_o_crear = plano_con_revision_ingresada; app.logger.info(f"Actualizando: {codigo_plano_form} Rev {revision_form}")
-
-          if plano_para_actualizar_o_crear.r2_object_key != r2_object_key_nuevo and plano_para_actualizar_o_crear.r2_object_key: app.logger.info(f"Clave R2 cambiará.")
-
-        elif revision_actual_mas_alta_db_str is None or es_revision_mas_nueva(revision_form, revision_actual_mas_alta_db_str):
-
-          app.logger.info(f"Nueva rev '{revision_form}' > '{revision_actual_mas_alta_db_str or 'ninguna'}'. Eliminando anteriores.")
-
-          for p_antiguo in planos_existentes_mismo_codigo: eliminar_objetos_r2_y_db.append(p_antiguo)
-
-          plano_para_actualizar_o_crear = Plano(codigo_plano=codigo_plano_form, revision=revision_form, area=area_final_determinada, nombre_archivo_original=original_filename_secure, r2_object_key=r2_object_key_nuevo, descripcion=descripcion_form)
-
-        else:
-
-          flash(f"Revisión '{revision_form}' no es más reciente. Rev más alta: '{revision_actual_mas_alta_db_str}'. No procesado.", "warning"); return redirect(request.url)
-
-      if not plano_para_actualizar_o_crear: raise Exception("Error determinando plano a crear/actualizar.")
-
-      plano_para_actualizar_o_crear.area = area_final_determinada; plano_para_actualizar_o_crear.r2_object_key = r2_object_key_nuevo
-
-      plano_para_actualizar_o_crear.nombre_archivo_original = original_filename_secure; plano_para_actualizar_o_crear.descripcion = descripcion_form
-
-      plano_para_actualizar_o_crear.fecha_subida = datetime.now(timezone.utc)
-
-      if plano_para_actualizar_o_crear not in db.session: db.session.add(plano_para_actualizar_o_crear)
-
-      db.session.flush(); plano_id_actual = plano_para_actualizar_o_crear.id
-
-      if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
-
-      texto_completo_pdf = extraer_texto_completo_pdf(pdf_file.stream)
-
-      actualizar_indice_fts_session(plano_id_actual, plano_para_actualizar_o_crear.codigo_plano, plano_para_actualizar_o_crear.area, plano_para_actualizar_o_crear.descripcion, texto_completo_pdf)
-
-      if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
-
-      s3.upload_fileobj(pdf_file.stream, R2_BUCKET_NAME, r2_object_key_nuevo); app.logger.info(f"Archivo subido a R2: {r2_object_key_nuevo}")
-
-      for plano_a_borrar_obj_db in eliminar_objetos_r2_y_db:
-
-        if plano_a_borrar_obj_db.r2_object_key and plano_a_borrar_obj_db.r2_object_key != r2_object_key_nuevo:
-
-          try: s3.delete_object(Bucket=R2_BUCKET_NAME, Key=plano_a_borrar_obj_db.r2_object_key); app.logger.info(f"Objeto R2 antiguo '{plano_a_borrar_obj_db.r2_object_key}' eliminado.")
-
-          except Exception as e_del: app.logger.error(f"Error borrando objeto R2 antiguo '{plano_a_borrar_obj_db.r2_object_key}': {e_del}")
-
-        eliminar_del_indice_fts_session(plano_a_borrar_obj_db.id)
-
-        db.session.delete(plano_a_borrar_obj_db); app.logger.info(f"Registro DB plano ID {plano_a_borrar_obj_db.id} Rev '{plano_a_borrar_obj_db.revision}' eliminado.")
-
-      db.session.commit()
-
-      flash(f"Plano '{codigo_plano_form}' Rev '{revision_form}' (Área: {area_final_determinada}) procesado e indexado.", "success"); return redirect(url_for('list_pdfs'))
-
-    except Exception as e:
-
-      db.session.rollback(); flash(f"Error procesando archivo: {str(e)}", "danger")
-
-      app.logger.error(f"Error en subida/DB: {e}", exc_info=True); return redirect(request.url)
-
-  return render_template('upload_pdf.html')
+    
+    if R2_CONFIG_MISSING:
+        flash("La subida de archivos está deshabilitada por un error de configuración.", "danger")
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        pdf_file = request.files.get('pdf_file')
+        codigo_plano_form = request.form.get('codigo_plano', '').strip()
+        revision_form = request.form.get('revision', '').strip()
+        area_form = request.form.get('area', '').strip()
+        descripcion_form = request.form.get('descripcion', '').strip()
+
+        if not pdf_file or not pdf_file.filename: # Chequeo adicional por si pdf_file es None
+            flash('No se seleccionó ningún archivo.', 'warning')
+            return redirect(request.url)
+        if not codigo_plano_form or not revision_form:
+            flash('Los campos Código del Plano y Revisión son obligatorios.', 'warning')
+            return redirect(request.url)
+        if not pdf_file.filename.lower().endswith('.pdf'):
+            flash('Solo se permiten archivos PDF.', 'warning')
+            return redirect(request.url)
+
+        area_final_determinada = None
+        es_mr = codigo_plano_form.upper().startswith("K484-0000-0000-MR-")
+
+        if es_mr:
+            if area_form:
+                area_final_determinada = area_form
+                app.logger.info(f"Plano MR. Se usará el área proporcionada manualmente: '{area_final_determinada}'")
+            else:
+                app.logger.info(f"Plano MR '{codigo_plano_form}' sin área proporcionada. Intentando extraer del PDF...")
+                try:
+                    if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
+                    area_extraida = extraer_area_del_pdf(pdf_file.stream)
+                    if area_extraida:
+                        area_final_determinada = area_extraida
+                        flash(f"Área '{area_final_determinada}' detectada automáticamente del PDF.", "info")
+                    else:
+                        area_final_determinada = "Area_MR_Pendiente"
+                        flash("No se pudo extraer el área del PDF MR. Se usará 'Area_MR_Pendiente'.", "warning")
+                except Exception as e_area_ext:
+                    app.logger.error(f"Excepción al extraer área del PDF MR: {e_area_ext}", exc_info=True)
+                    area_final_determinada = "Area_MR_Error"
+                    flash("Error al intentar extraer el área del PDF MR. Se usará 'Area_MR_Error'.", "warning")
+        else: # No es MR
+            if area_form:
+                area_final_determinada = area_form
+            else:
+                flash('El campo "Área" es obligatorio para planos que no son MR.', 'warning')
+                return redirect(request.url)
+        
+        if area_final_determinada is None: # Doble chequeo por si alguna lógica falló
+             flash('Error crítico: No se pudo determinar el Área para el plano.', 'danger')
+             app.logger.error("CRÍTICO: area_final_determinada es None antes de la subida.")
+             return redirect(request.url)
+
+        original_filename_secure = secure_filename(pdf_file.filename)
+        cleaned_area = clean_for_path(area_final_determinada)
+        cleaned_codigo = clean_for_path(codigo_plano_form)
+        cleaned_revision = clean_for_path(revision_form)
+
+        r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision}.pdf"
+        r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
+        
+        s3 = get_s3_client()
+        if not s3:
+            flash("Error de configuración con el servicio de almacenamiento (R2). La subida falló.", "danger")
+            return redirect(request.url)
+
+        try:
+            planos_existentes_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_form).all()
+            plano_para_actualizar_o_crear = None
+            eliminar_objetos_r2_y_db = []
+
+            if not planos_existentes_mismo_codigo:
+                app.logger.info(f"Creando nuevo registro para el plano: {codigo_plano_form} Rev {revision_form}")
+                plano_para_actualizar_o_crear = Plano(
+                    codigo_plano=codigo_plano_form, revision=revision_form, area=area_final_determinada,
+                    nombre_archivo_original=original_filename_secure, r2_object_key=r2_object_key_nuevo,
+                    descripcion=descripcion_form
+                )
+            else:
+                revision_actual_mas_alta_db_str = None
+                plano_con_revision_ingresada = None
+                for p_existente in planos_existentes_mismo_codigo:
+                    if p_existente.revision == revision_form:
+                        plano_con_revision_ingresada = p_existente
+                    if revision_actual_mas_alta_db_str is None or es_revision_mas_nueva(p_existente.revision, revision_actual_mas_alta_db_str):
+                        revision_actual_mas_alta_db_str = p_existente.revision
+                
+                if plano_con_revision_ingresada:
+                    app.logger.info(f"Actualizando plano existente: {codigo_plano_form} Rev {revision_form}")
+                    plano_para_actualizar_o_crear = plano_con_revision_ingresada
+                    if plano_para_actualizar_o_crear.r2_object_key != r2_object_key_nuevo and plano_para_actualizar_o_crear.r2_object_key:
+                        app.logger.info(f"La clave del objeto R2 cambiará. Antiguo: {plano_para_actualizar_o_crear.r2_object_key}, Nuevo: {r2_object_key_nuevo}")
+                        # La lógica para borrar el objeto antiguo se manejará después de subir el nuevo
+                elif revision_actual_mas_alta_db_str is None or es_revision_mas_nueva(revision_form, revision_actual_mas_alta_db_str):
+                    app.logger.info(f"Nueva revisión '{revision_form}' es más reciente que '{revision_actual_mas_alta_db_str or 'ninguna existente'}'. Marcando revisiones antiguas para eliminación.")
+                    for p_antiguo in planos_existentes_mismo_codigo:
+                        eliminar_objetos_r2_y_db.append(p_antiguo)
+                    plano_para_actualizar_o_crear = Plano(
+                        codigo_plano=codigo_plano_form, revision=revision_form, area=area_final_determinada,
+                        nombre_archivo_original=original_filename_secure, r2_object_key=r2_object_key_nuevo,
+                        descripcion=descripcion_form
+                    )
+                else:
+                    flash(f"Revisión '{revision_form}' no es más reciente que la revisión existente '{revision_actual_mas_alta_db_str}'. El archivo no fue procesado.", "warning")
+                    return redirect(request.url)
+
+            if not plano_para_actualizar_o_crear:
+                app.logger.error("CRÍTICO: No se pudo determinar el objeto plano para actualizar o crear.")
+                raise Exception("Error interno determinando el plano a crear/actualizar.")
+
+            # Actualizar datos del plano
+            plano_para_actualizar_o_crear.area = area_final_determinada
+            plano_para_actualizar_o_crear.r2_object_key = r2_object_key_nuevo
+            plano_para_actualizar_o_crear.nombre_archivo_original = original_filename_secure
+            plano_para_actualizar_o_crear.descripcion = descripcion_form
+            plano_para_actualizar_o_crear.fecha_subida = datetime.now(timezone.utc)
+
+            if plano_para_actualizar_o_crear not in db.session:
+                db.session.add(plano_para_actualizar_o_crear)
+            
+            db.session.flush() # Para obtener el ID si es un nuevo plano
+            plano_id_actual = plano_para_actualizar_o_crear.id
+
+            # Procesar y subir archivo
+            try:
+                if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
+                texto_completo_pdf = extraer_texto_completo_pdf(pdf_file.stream) # Límite de páginas ya aplicado dentro
+                
+                if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
+                s3.upload_fileobj(pdf_file.stream, R2_BUCKET_NAME, r2_object_key_nuevo)
+                app.logger.info(f"Archivo '{r2_object_key_nuevo}' subido exitosamente a R2.")
+            except ClientError as e_s3: # Error específico de Boto3/S3
+                app.logger.error(f"Error de Boto3/S3 al subir el archivo a R2: {e_s3}", exc_info=True)
+                db.session.rollback()
+                flash(f"Error de conexión al subir el archivo: {e_s3.response.get('Error', {}).get('Message', 'Error desconocido')}", "danger")
+                return redirect(request.url)
+            except Exception as e_upload: # Otro error durante la subida o extracción
+                app.logger.error(f"Error durante la extracción de texto o subida del archivo: {e_upload}", exc_info=True)
+                db.session.rollback()
+                flash(f"Error procesando el archivo PDF o subiéndolo: {str(e_upload)}", "danger")
+                return redirect(request.url)
+
+            # Actualizar índice FTS
+            actualizar_indice_fts_session(
+                plano_id_actual, plano_para_actualizar_o_crear.codigo_plano,
+                plano_para_actualizar_o_crear.area, plano_para_actualizar_o_crear.descripcion,
+                texto_completo_pdf
+            )
+            
+            # Eliminar objetos y registros antiguos de la BD si es una nueva revisión mayor
+            for plano_a_borrar_obj_db in eliminar_objetos_r2_y_db:
+                if plano_a_borrar_obj_db.r2_object_key and plano_a_borrar_obj_db.r2_object_key != r2_object_key_nuevo:
+                    try:
+                        s3.delete_object(Bucket=R2_BUCKET_NAME, Key=plano_a_borrar_obj_db.r2_object_key)
+                        app.logger.info(f"Objeto R2 antiguo '{plano_a_borrar_obj_db.r2_object_key}' eliminado.")
+                    except Exception as e_del_r2:
+                        app.logger.error(f"Error borrando objeto R2 antiguo '{plano_a_borrar_obj_db.r2_object_key}': {e_del_r2}")
+                eliminar_del_indice_fts_session(plano_a_borrar_obj_db.id)
+                db.session.delete(plano_a_borrar_obj_db)
+                app.logger.info(f"Registro de base de datos para plano ID {plano_a_borrar_obj_db.id} (Rev '{plano_a_borrar_obj_db.revision}') eliminado.")
+            
+            db.session.commit()
+            flash(f"Plano '{codigo_plano_form}' Revisión '{revision_form}' (Área: {area_final_determinada}) procesado e indexado correctamente.", "success")
+            return redirect(url_for('list_pdfs'))
+
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error general procesando el archivo: {str(e)}", "danger")
+            app.logger.error(f"Error general en la subida/DB: {e}", exc_info=True)
+            return redirect(request.url)
+
+    return render_template('upload_pdf.html')
 
 @app.route('/pdfs')
 @login_required
@@ -409,58 +438,38 @@ def list_pdfs():
         query_codigo = request.args.get('q_codigo', '').strip()
         query_area = request.args.get('q_area', '').strip()
         query_contenido = request.args.get('q_contenido', '').strip()
-
-        app.logger.info(f"Buscando con Código: '{query_codigo}', Área: '{query_area}', Contenido: '{query_contenido}'")
-
-        final_query = Plano.query # Empiezas con todos los planos
+        
+        final_query = Plano.query
 
         if query_codigo:
-            app.logger.info(f"Filtro código: %{query_codigo}%")
             final_query = final_query.filter(Plano.codigo_plano.ilike(f'%{query_codigo}%'))
-
         if query_area:
-            app.logger.info(f"Filtro área: %{query_area}%")
             final_query = final_query.filter(Plano.area.ilike(f'%{query_area}%'))
 
-        planos_db = [] # Inicializa como lista vacía
+        planos_db = []
 
         if query_contenido:
             terminos_fts = " ".join([f"{palabra.strip()}*" for palabra in query_contenido.split() if palabra.strip()])
             if not terminos_fts:
-                app.logger.info("Término de búsqueda FTS vacío, no se aplicará filtro FTS.")
-                # Si no hay término FTS, simplemente ejecuta la consulta acumulada hasta ahora
                 planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
             else:
-                app.logger.info(f"Término FTS para la búsqueda: '{terminos_fts}'")
                 sql_fts = db.text("SELECT plano_id FROM plano_fts WHERE plano_fts MATCH :termino ORDER BY rank")
-
                 with db.engine.connect() as conn:
                     result = conn.execute(sql_fts, {"termino": terminos_fts})
-
                 ids_encontrados_fts = [row[0] for row in result]
-
+                
                 if not ids_encontrados_fts:
-                    app.logger.info("La búsqueda FTS no devolvió IDs. No se mostrarán resultados basados en contenido.")
-                    planos_db = [] # No hay resultados si FTS es el único filtro y no devuelve nada
+                    planos_db = [] 
                 else:
-                    app.logger.info(f"IDs encontrados por FTS: {ids_encontrados_fts}")
-                    # Combina los IDs de FTS con los filtros anteriores
                     final_query = final_query.filter(Plano.id.in_(ids_encontrados_fts))
                     planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
         else:
-            # Si no hay búsqueda por contenido, ejecuta la consulta con los filtros de código y área
             planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
-
-        app.logger.info(f"Número de planos finales encontrados: {len(planos_db)}")
-        if planos_db:
-            app.logger.info(f"Primer plano en la lista: {planos_db[0].codigo_plano}")
 
     except Exception as e:
         flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
         app.logger.error(f"Error en la ruta /pdfs: {e}", exc_info=True)
-        planos_db = [] # En caso de error, devuelve una lista vacía
-
-    # Esta es la línea crucial que devuelve la respuesta a Flask
+        planos_db = [] 
     return render_template('list_pdfs.html', planos=planos_db, R2_OBJECT_PREFIX=R2_OBJECT_PREFIX)
 
 @app.route('/pdfs/view/<path:object_key>')
@@ -469,18 +478,15 @@ def view_pdf(object_key):
     if R2_CONFIG_MISSING:
         flash("La visualización de archivos está deshabilitada por un error de configuración.", "danger")
         return redirect(url_for('list_pdfs'))
-    
     s3 = get_s3_client()
     if not s3:
         flash("Error al conectar con el servicio de almacenamiento.", "danger")
         return redirect(url_for('list_pdfs'))
-    
     try:
-        # Genera una URL firmada que es válida por 1 hora (3600 segundos)
         presigned_url = s3.generate_presigned_url(
             'get_object',
             Params={'Bucket': R2_BUCKET_NAME, 'Key': object_key},
-            ExpiresIn=3600
+            ExpiresIn=3600 
         )
         return redirect(presigned_url)
     except Exception as e:
@@ -509,14 +515,12 @@ def edit_plano(plano_id):
 
         antigua_r2_object_key = plano_a_editar.r2_object_key
         
-        # Generar nueva clave de objeto
         nueva_area_limpia = clean_for_path(nueva_area_form)
         nueva_revision_limpia = clean_for_path(nueva_revision_form)
         codigo_plano_limpio = clean_for_path(plano_a_editar.codigo_plano)
         nuevo_r2_filename = f"{codigo_plano_limpio}_Rev{nueva_revision_limpia}.pdf"
         nueva_r2_object_key = f"{R2_OBJECT_PREFIX}{nueva_area_limpia}/{nuevo_r2_filename}"
         
-        # Validaciones de conflictos
         if nueva_revision_form != plano_a_editar.revision:
             conflicto_revision = Plano.query.filter(
                 Plano.codigo_plano == plano_a_editar.codigo_plano,
@@ -534,7 +538,6 @@ def edit_plano(plano_id):
                 return render_template('edit_plano.html', plano=plano_a_editar)
 
         try:
-            # Mover el objeto en R2 si la clave ha cambiado
             if nueva_r2_object_key != antigua_r2_object_key and antigua_r2_object_key and s3:
                 app.logger.info(f"Moviendo en R2 de '{antigua_r2_object_key}' a '{nueva_r2_object_key}'")
                 copy_source = {'Bucket': R2_BUCKET_NAME, 'Key': antigua_r2_object_key}
@@ -542,14 +545,12 @@ def edit_plano(plano_id):
                 s3.delete_object(Bucket=R2_BUCKET_NAME, Key=antigua_r2_object_key)
                 app.logger.info("Archivo movido con éxito en R2.")
             
-            # Actualizar datos en la base de datos
             plano_a_editar.revision = nueva_revision_form
             plano_a_editar.area = nueva_area_form
             plano_a_editar.descripcion = nueva_descripcion_form
             plano_a_editar.r2_object_key = nueva_r2_object_key
             plano_a_editar.fecha_subida = datetime.now(timezone.utc)
             
-            # Re-indexar en FTS
             contenido_pdf_actual = ""
             try:
                 with db.engine.connect() as conn:
@@ -557,14 +558,15 @@ def edit_plano(plano_id):
                     if result_fts and result_fts[0]:
                         contenido_pdf_actual = result_fts[0]
             except Exception as e_fetch_fts:
-                app.logger.error(f"No se pudo recuperar contenido_pdf de FTS para plano {plano_id}: {e_fetch_fts}")
+                app.logger.error(f"No se pudo recuperar contenido_pdf de FTS para plano {plano_id} al editar: {e_fetch_fts}")
 
             actualizar_indice_fts_session(
                 plano_id_val=plano_a_editar.id,
                 codigo_plano_val=plano_a_editar.codigo_plano,
                 area_val=plano_a_editar.area,
                 descripcion_val=plano_a_editar.descripcion,
-                contenido_pdf_val=contenido_pdf_actual)
+                contenido_pdf_val=contenido_pdf_actual
+            )
             
             db.session.commit()
             flash(f"Plano '{plano_a_editar.codigo_plano}' actualizado correctamente.", "success")
@@ -601,20 +603,17 @@ def delete_pdf(plano_id):
     revision_eliminada = plano_a_eliminar.revision
     
     try:
-        # Eliminar el objeto de R2 si existe
         if r2_key_a_eliminar:
             app.logger.info(f"Intentando eliminar el objeto '{r2_key_a_eliminar}' de R2.")
             s3.delete_object(Bucket=R2_BUCKET_NAME, Key=r2_key_a_eliminar)
             app.logger.info(f"Objeto '{r2_key_a_eliminar}' eliminado (o no encontrado) de R2.")
         
-        # Eliminar del índice FTS y de la base de datos principal
         eliminar_del_indice_fts_session(plano_a_eliminar.id)
         db.session.delete(plano_a_eliminar)
         db.session.commit()
         
         flash(f"Plano '{codigo_plano_eliminado}' Rev '{revision_eliminada}' eliminado correctamente.", "success")
         app.logger.info(f"Plano ID {plano_a_eliminar.id} ('{codigo_plano_eliminado}' Rev '{revision_eliminada}') eliminado de la base de datos y del índice FTS.")
-    
     except Exception as e:
         db.session.rollback()
         flash(f"Error al eliminar el plano: {str(e)}", "danger")
@@ -632,7 +631,7 @@ with app.app_context():
     if not User.query.filter_by(username='admin').first():
         try:
             admin_user = User(username='admin', role='admin')
-            admin_user.set_password(os.getenv('ADMIN_PASSWORD', 'admin123')) # Es mejor usar variables de entorno
+            admin_user.set_password(os.getenv('ADMIN_PASSWORD', 'admin123')) 
             db.session.add(admin_user)
             db.session.commit()
             app.logger.info("Usuario 'admin' por defecto creado (o ya existía).")
