@@ -1,4 +1,5 @@
 # === VERSIÓN FINAL Y FUNCIONAL ===
+import spacy 
 import os
 import re
 from datetime import datetime, timezone
@@ -20,6 +21,19 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', os.urandom(24))
+
+# Carga global del modelo spaCy para español
+# Se intentará cargar una vez. Si falla, las funciones que lo usan deben manejarlo.
+NLP_ES = None
+try:
+    NLP_ES = spacy.load("es_core_news_sm")
+    app.logger.info("Modelo spaCy 'es_core_news_sm' cargado exitosamente al iniciar la aplicación.")
+except OSError:
+    app.logger.error("FALLO AL CARGAR MODELO spaCy 'es_core_news_sm'. " +
+                     "Asegúrate de haberlo descargado con: python -m spacy download es_core_news_sm. " +
+                     "La lematización estará deshabilitada.")
+except Exception as e:
+    app.logger.error(f"Ocurrió un error inesperado al cargar el modelo spaCy: {e}")
 
 # --- Configuración de la Base de Datos ---
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'planos_database.db')
@@ -438,7 +452,9 @@ def list_pdfs():
         query_codigo = request.args.get('q_codigo', '').strip()
         query_area = request.args.get('q_area', '').strip()
         query_contenido = request.args.get('q_contenido', '').strip()
-        
+
+        app.logger.info(f"Buscando con Código: '{query_codigo}', Área: '{query_area}', Contenido Original: '{query_contenido}'") # Log original
+
         final_query = Plano.query
 
         if query_codigo:
@@ -449,22 +465,43 @@ def list_pdfs():
         planos_db = []
 
         if query_contenido:
-            terminos_fts = " ".join([f"{palabra.strip()}*" for palabra in query_contenido.split() if palabra.strip()])
+            processed_query_contenido = query_contenido # Por defecto, usar la consulta original
+            if NLP_ES: # Solo si el modelo se cargó correctamente
+                doc = NLP_ES(query_contenido.lower()) # Convertir a minúsculas para mejor lematización
+                # Filtramos tokens que no sean stop words (palabras comunes) ni puntuación
+                lemmatized_terms = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and token.lemma_.strip()]
+                if lemmatized_terms:
+                    processed_query_contenido = " ".join(lemmatized_terms)
+                    app.logger.info(f"Término FTS lematizado y filtrado: '{processed_query_contenido}' (Original: '{query_contenido}')")
+                else:
+                    app.logger.info(f"Lematización no produjo términos útiles para '{query_contenido}', usando original.")
+            else: # Fallback si spaCy no está disponible
+                app.logger.warning("Modelo NLP_ES no disponible, usando término de búsqueda original para FTS.")
+
+            # Construir el término FTS con las palabras procesadas (lematizadas o originales)
+            terminos_fts = " ".join([f"{palabra.strip()}*" for palabra in processed_query_contenido.split() if palabra.strip()])
+
             if not terminos_fts:
+                app.logger.info("Término de búsqueda FTS vacío después del procesamiento, no se aplicará filtro FTS.")
                 planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
             else:
+                app.logger.info(f"Término FTS final para la búsqueda: '{terminos_fts}'")
                 sql_fts = db.text("SELECT plano_id FROM plano_fts WHERE plano_fts MATCH :termino ORDER BY rank")
                 with db.engine.connect() as conn:
                     result = conn.execute(sql_fts, {"termino": terminos_fts})
                 ids_encontrados_fts = [row[0] for row in result]
-                
+
                 if not ids_encontrados_fts:
+                    app.logger.info("La búsqueda FTS no devolvió IDs.")
                     planos_db = [] 
                 else:
+                    app.logger.info(f"IDs encontrados por FTS: {ids_encontrados_fts}")
                     final_query = final_query.filter(Plano.id.in_(ids_encontrados_fts))
                     planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
         else:
             planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
+
+        app.logger.info(f"Número de planos finales encontrados: {len(planos_db)}")
 
     except Exception as e:
         flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
