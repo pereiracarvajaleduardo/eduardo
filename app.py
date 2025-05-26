@@ -75,15 +75,8 @@ R2_CONFIG_MISSING = not all([R2_BUCKET_NAME, R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, 
 R2_OBJECT_PREFIX = 'planos/'
 
 
-# --- Modelos de Base de Datos ---
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(50), nullable=False, default='consultor')
-    def set_password(self, password): self.password_hash = generate_password_hash(password)
-    def check_password(self, password): return check_password_hash(self.password_hash, password)
-    def __repr__(self): return f'<User {self.username} ({self.role})>'
+from sqlalchemy.dialects.postgresql import TSVECTOR # Importar TSVECTOR
+from sqlalchemy import Index # Importar Index
 
 class Plano(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -94,9 +87,19 @@ class Plano(db.Model):
     r2_object_key = db.Column(db.String(500), unique=True, nullable=False)
     fecha_subida = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     descripcion = db.Column(db.Text, nullable=True)
-    __table_args__ = (db.UniqueConstraint('codigo_plano', 'revision', name='uq_codigo_plano_revision'),)
-    def __repr__(self): return f'<Plano {self.codigo_plano} Rev: {self.revision}>'
+    
+    # Nueva columna para FTS en PostgreSQL
+    # Usamos .ischema. ponieważ TSVECTOR puede no estar directamente en db.
+    tsvector_contenido = db.Column(TSVECTOR) 
 
+    __table_args__ = (
+        db.UniqueConstraint('codigo_plano', 'revision', name='uq_codigo_plano_revision'),
+        # Crear un índice GIN en la columna tsvector para búsquedas rápidas
+        # El 'postgresql_using='gin'' es específico para PostgreSQL
+        Index('idx_plano_tsvector_contenido', tsvector_contenido, postgresql_using='gin'),
+    )
+
+    def __repr__(self): return f'<Plano {self.codigo_plano} Rev: {self.revision}>'
 
 # --- Funciones Auxiliares ---
 @login_manager.user_loader
@@ -222,21 +225,28 @@ def inicializar_fts():
 
 def actualizar_indice_fts_session(plano_id_val, codigo_plano_val, area_val, descripcion_val, contenido_pdf_val):
     try:
-        db.session.execute(db.text("DELETE FROM plano_fts WHERE plano_id = :plano_id;"), {"plano_id": plano_id_val})
-        db.session.execute(db.text("""
-            INSERT INTO plano_fts (plano_id, codigo_plano, area, descripcion, contenido_pdf)
-            VALUES (:plano_id, :codigo_plano, :area, :descripcion, :contenido_pdf);
-        """), {
-            "plano_id": plano_id_val, 
-            "codigo_plano": codigo_plano_val or "",
-            "area": area_val or "", 
-            "descripcion": descripcion_val or "",
-            "contenido_pdf": contenido_pdf_val or ""
-        })
-        app.logger.info(f"Operaciones FTS para plano_id: {plano_id_val} añadidas a la sesión.")
+        # Combina todos los campos que quieres que sean buscables en un solo string
+        # Es importante especificar el idioma ('spanish' para PostgreSQL)
+        texto_para_indexar = " ".join(filter(None, [
+            codigo_plano_val,
+            area_val,
+            descripcion_val,
+            contenido_pdf_val
+        ]))
+
+        # Actualiza la columna tsvector_contenido para el plano_id dado
+        # Usamos func.to_tsvector de SQLAlchemy y especificamos el idioma 'spanish'
+        stmt = (
+            db.update(Plano)
+            .where(Plano.id == plano_id_val)
+            .values(tsvector_contenido=func.to_tsvector('spanish', texto_para_indexar))
+        )
+        db.session.execute(stmt)
+        app.logger.info(f"Índice FTS (columna tsvector) actualizado en sesión para plano_id: {plano_id_val}")
     except Exception as e:
-        app.logger.error(f"Error preparando la actualización FTS para plano_id {plano_id_val}: {e}", exc_info=True)
-        raise
+        app.logger.error(f"Error actualizando tsvector para plano_id {plano_id_val}: {e}", exc_info=True)
+        # Considera si quieres hacer raise e o manejarlo de otra forma
+        raise 
 
 def eliminar_del_indice_fts_session(plano_id_val):
     try:
@@ -460,7 +470,6 @@ def upload_pdf():
             return redirect(request.url)
 
     return render_template('upload_pdf.html')
-
 @app.route('/pdfs')
 @login_required
 def list_pdfs():
@@ -468,9 +477,7 @@ def list_pdfs():
         query_codigo = request.args.get('q_codigo', '').strip()
         query_area = request.args.get('q_area', '').strip()
         query_contenido = request.args.get('q_contenido', '').strip()
-
-        app.logger.info(f"Buscando con Código: '{query_codigo}', Área: '{query_area}', Contenido Original: '{query_contenido}'") # Log original
-
+        
         final_query = Plano.query
 
         if query_codigo:
@@ -478,45 +485,20 @@ def list_pdfs():
         if query_area:
             final_query = final_query.filter(Plano.area.ilike(f'%{query_area}%'))
 
-        planos_db = []
-
         if query_contenido:
-            processed_query_contenido = query_contenido # Por defecto, usar la consulta original
-            if NLP_ES: # Solo si el modelo se cargó correctamente
-                doc = NLP_ES(query_contenido.lower()) # Convertir a minúsculas para mejor lematización
-                # Filtramos tokens que no sean stop words (palabras comunes) ni puntuación
-                lemmatized_terms = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and token.lemma_.strip()]
-                if lemmatized_terms:
-                    processed_query_contenido = " ".join(lemmatized_terms)
-                    app.logger.info(f"Término FTS lematizado y filtrado: '{processed_query_contenido}' (Original: '{query_contenido}')")
-                else:
-                    app.logger.info(f"Lematización no produjo términos útiles para '{query_contenido}', usando original.")
-            else: # Fallback si spaCy no está disponible
-                app.logger.warning("Modelo NLP_ES no disponible, usando término de búsqueda original para FTS.")
+            app.logger.info(f"Buscando en contenido FTS (PostgreSQL): '{query_contenido}'")
+            # plainto_tsquery es bueno para búsquedas de usuario, maneja múltiples palabras
+            # y las convierte a una consulta FTS válida (ej. 'palabra1 & palabra2')
+            # Asegúrate de especificar el idioma 'spanish'
+            final_query = final_query.filter(
+                Plano.tsvector_contenido.match(query_contenido, postgresql_regconfig='spanish')
+            )
+            # Puedes ordenar por relevancia si lo deseas, pero requiere funciones más complejas
+            # como ts_rank o ts_rank_cd. Por ahora, lo omitimos para simplicidad.
+            # final_query = final_query.order_by(func.ts_rank_cd(Plano.tsvector_contenido, func.plainto_tsquery('spanish', query_contenido)).desc())
 
-            # Construir el término FTS con las palabras procesadas (lematizadas o originales)
-            terminos_fts = " ".join([f"{palabra.strip()}*" for palabra in processed_query_contenido.split() if palabra.strip()])
 
-            if not terminos_fts:
-                app.logger.info("Término de búsqueda FTS vacío después del procesamiento, no se aplicará filtro FTS.")
-                planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
-            else:
-                app.logger.info(f"Término FTS final para la búsqueda: '{terminos_fts}'")
-                sql_fts = db.text("SELECT plano_id FROM plano_fts WHERE plano_fts MATCH :termino ORDER BY rank")
-                with db.engine.connect() as conn:
-                    result = conn.execute(sql_fts, {"termino": terminos_fts})
-                ids_encontrados_fts = [row[0] for row in result]
-
-                if not ids_encontrados_fts:
-                    app.logger.info("La búsqueda FTS no devolvió IDs.")
-                    planos_db = [] 
-                else:
-                    app.logger.info(f"IDs encontrados por FTS: {ids_encontrados_fts}")
-                    final_query = final_query.filter(Plano.id.in_(ids_encontrados_fts))
-                    planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
-        else:
-            planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
-
+        planos_db = final_query.order_by(Plano.area, Plano.codigo_plano, Plano.revision).all()
         app.logger.info(f"Número de planos finales encontrados: {len(planos_db)}")
 
     except Exception as e:
@@ -678,7 +660,6 @@ def delete_pdf(plano_id):
 # --- Bloque de Inicialización de la Aplicación ---
 with app.app_context():
     db.create_all()
-    inicializar_fts()
     
     # Crear usuario admin por defecto si no existe
     if not User.query.filter_by(username='admin').first():
