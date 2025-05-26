@@ -36,9 +36,25 @@ except Exception as e:
     app.logger.error(f"Ocurrió un error inesperado al cargar el modelo spaCy: {e}")
 
 # --- Configuración de la Base de Datos ---
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'planos_database.db')
+# Usa la DATABASE_URL de las variables de entorno si existe (para Render),
+# sino, usa una SQLite local para desarrollo.
+DATABASE_URL_ENV = os.getenv('DATABASE_URL')
+if DATABASE_URL_ENV:
+    # Asegúrate de que SQLAlchemy use 'postgresql' y no 'postgres' para psycopg2
+    if DATABASE_URL_ENV.startswith("postgres://"):
+        DATABASE_URL_ENV = DATABASE_URL_ENV.replace("postgres://", "postgresql://", 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL_ENV
+    app.logger.info(f"Usando base de datos PostgreSQL externa: {DATABASE_URL_ENV.split('@')[-1]}") # No mostrar credenciales
+else:
+    # Fallback a SQLite para desarrollo local si DATABASE_URL no está definida
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+    db_file_path = os.path.join(BASE_DIR, 'planos_dev.db') # Puedes usar un nombre diferente para la local
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_file_path
+    app.logger.info(f"ADVERTENCIA: DATABASE_URL no encontrada. Usando base de datos SQLite local en: {db_file_path}")
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
 
 # --- Configuración de Flask-Login ---
 login_manager = LoginManager()
