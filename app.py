@@ -662,7 +662,7 @@ def edit_plano(plano_id):
 
                 # Asumamos que si no hay pdf_file_edit, el texto_completo_pdf_edit sigue siendo ""
                 # y el idioma_doc_edit es el que ya tenía el plano.
-                 pass # No se hace nada con texto_completo_pdf_edit si no hay archivo
+                # No se hace nada con texto_completo_pdf_edit si no hay archivo
             
             actualizar_tsvector_plano(
                 plano_id_val=plano_a_editar.id,
