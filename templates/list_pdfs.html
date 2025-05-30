@@ -7,7 +7,7 @@
     <div class="card-header">Buscar Planos</div>
     <div class="card-body">
         <form method="GET" action="{{ url_for('list_pdfs') }}">
-            <div class="row g-2 mb-3 align-items-center"> {# align-items-center para mejor alineación vertical #}
+            <div class="row g-2 mb-3 align-items-center">
                 <div class="col-md-3">
                     <input type="text" class="form-control form-control-sm" name="q_codigo" placeholder="Buscar por Código del Plano..." value="{{ request.args.get('q_codigo', '') }}">
                 </div>
@@ -36,7 +36,7 @@
     <div class="card-body">
         {% if planos %}
             <div class="table-responsive">
-                <table class="table table-striped table-hover table-sm"> {# table-sm para más compacta #}
+                <table class="table table-striped table-hover table-sm">
                     <thead>
                         <tr>
                             <th>Código del Plano</th>
@@ -59,10 +59,8 @@
                             <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>
                             <td>
                                 <a href="{{ url_for('view_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-outline-primary mb-1 d-block" target="_blank">Ver/Descargar</a>
-                                
                                 {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
                                 <a href="{{ url_for('edit_plano', plano_id=plano_item.id) }}" class="btn btn-sm btn-outline-secondary mb-1 d-block">Editar</a>
-                                
                                 <form action="{{ url_for('delete_pdf', plano_id=plano_item.id) }}" method="POST" style="display: inline;"
                                       onsubmit="return confirm('¿Estás seguro de que quieres eliminar este plano? Esta acción no se puede deshacer.');">
                                     <button type="submit" class="btn btn-sm btn-outline-danger d-block w-100">Eliminar</button>
@@ -88,77 +86,118 @@
 
 {% endblock %}
 
-{# Coloca el script al final del bloque de contenido, o en un bloque 'scripts' si tu base.html lo define #}
 {% block scripts %}
-{{ super() }} {# Si base.html tiene un bloque scripts, esto incluye su contenido #}
+{{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    console.log("DEBUG: DOMContentLoaded disparado. Buscando elementos...");
     const voiceSearchBtn = document.getElementById('voiceSearchBtn');
-    const searchInput = document.getElementById('q_contenido'); // Campo de texto para 'q_contenido'
+    const searchInput = document.getElementById('q_contenido');
     const voiceSearchStatus = document.getElementById('voiceSearchStatus');
 
+    console.log("DEBUG: voiceSearchBtn encontrado:", voiceSearchBtn);
+    console.log("DEBUG: searchInput encontrado:", searchInput);
+    console.log("DEBUG: voiceSearchStatus encontrado:", voiceSearchStatus);
+
+    if (!voiceSearchBtn) {
+        console.error("DEBUG: El botón voiceSearchBtn NO fue encontrado. Verifica el ID en el HTML.");
+        return;
+    }
+    if (!searchInput) {
+        console.error("DEBUG: El input searchInput (q_contenido) NO fue encontrado. Verifica el ID en el HTML.");
+    }
+    if (!voiceSearchStatus) {
+        console.warn("DEBUG: El elemento voiceSearchStatus NO fue encontrado. Los mensajes de estado no se mostrarán.");
+    }
+
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+        console.log("DEBUG: API SpeechRecognition compatible detectada.");
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
 
-        recognition.lang = navigator.language || 'es-CL'; // Adaptar según necesidad, ej: 'es-ES'
+        recognition.lang = navigator.language || 'es-CL';
         recognition.continuous = false;
         recognition.interimResults = false;
+        console.log("DEBUG: Objeto recognition configurado con lang:", recognition.lang);
 
         voiceSearchBtn.addEventListener('click', () => {
+            console.log("DEBUG: Botón de micrófono clickeado.");
             try {
+                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Intentando iniciar reconocimiento...';
+                else console.log("DEBUG: voiceSearchStatus es null, no se puede mostrar mensaje 'Intentando iniciar'.")
+
+                console.log("DEBUG: Llamando a recognition.start()...");
                 recognition.start();
-                voiceSearchBtn.disabled = true;
-                voiceSearchBtn.innerHTML = '🎙️'; // Ícono de "escuchando"
-                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Escuchando...';
             } catch(e) {
-                console.error("Error al iniciar reconocimiento de voz:", e);
-                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Error al iniciar. Asegúrate que el micrófono está permitido y no está ya en uso.';
-                voiceSearchBtn.disabled = false;
-                voiceSearchBtn.innerHTML = '🎤'; // Ícono original
+                console.error("DEBUG: Error CATCH al intentar recognition.start():", e);
+                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Error al iniciar. Revise la consola (F12).';
+                if(voiceSearchBtn) {
+                    voiceSearchBtn.disabled = false;
+                    voiceSearchBtn.innerHTML = '🎤';
+                }
             }
         });
+        console.log("DEBUG: Event listener añadido al botón voiceSearchBtn.");
 
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            searchInput.value = transcript;
-            if (voiceSearchStatus) voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
-            // Opcional: Enviar el formulario automáticamente
-            if (searchInput && searchInput.form) {
-    console.log("DEBUG: Enviando formulario automáticamente...");
-    searchInput.form.submit();
-} else {
-    console.error("DEBUG: No se puede enviar el formulario automáticamente, searchInput o searchInput.form no encontrados.");
-}
-
-        recognition.onerror = (event) => {
-            console.error('Error en el reconocimiento de voz:', event.error);
-            let errorMessage = 'Ocurrió un error con la búsqueda por voz.';
-            if (event.error === 'no-speech') {
-                errorMessage = 'No se detectó voz. Por favor, inténtalo de nuevo.';
-            } else if (event.error === 'audio-capture') {
-                errorMessage = 'No se pudo acceder al micrófono. Verifica los permisos y que esté funcionando.';
-            } else if (event.error === 'not-allowed') {
-                errorMessage = 'Permiso para usar el micrófono denegado. Debes habilitarlo en la configuración de tu navegador (generalmente haciendo clic en el ícono de candado en la barra de direcciones).';
-            } else if (event.error === 'network') {
-                errorMessage = 'Error de red. Se necesita conexión a internet para la búsqueda por voz.';
+        recognition.onstart = () => {
+            console.log("DEBUG: recognition.onstart - El reconocimiento de voz ha comenzado.");
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = true;
+                voiceSearchBtn.innerHTML = '🎙️';
             }
-            if (voiceSearchStatus) voiceSearchStatus.textContent = errorMessage;
+            if (voiceSearchStatus) voiceSearchStatus.textContent = 'Escuchando...';
         };
 
-        recognition.onend = () => {
-            voiceSearchBtn.disabled = false;
-            voiceSearchBtn.innerHTML = '🎤'; // Ícono original
-            // No se limpia el status aquí inmediatamente para que el usuario pueda leer el último mensaje.
-            // Se podría limpiar después de unos segundos si se desea.
+        recognition.onresult = (event) => { // <<--- INICIO DE ONRESULT
+            console.log("DEBUG: recognition.onresult - Resultado obtenido.");
+            const transcript = event.results[0][0].transcript;
+            console.log("DEBUG: Texto transcrito:", transcript);
+            if(searchInput) searchInput.value = transcript;
+            else console.error("DEBUG: searchInput es null, no se puede poner el transcript.")
+
+            if (voiceSearchStatus) voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
+
+            // Enviar el formulario automáticamente
+            if (searchInput && searchInput.form) {
+                console.log("DEBUG: Enviando formulario automáticamente...");
+                searchInput.form.submit();
+            } else {
+                console.error("DEBUG: No se puede enviar el formulario automáticamente, searchInput o searchInput.form no encontrados.");
+            }
+        }; // <<--- FIN DE ONRESULT. Los siguientes deben estar fuera.
+
+        recognition.onerror = (event) => { // <<--- ONERROR AHORA ESTÁ EN EL NIVEL CORRECTO
+            console.error('DEBUG: recognition.onerror - Error en el reconocimiento de voz:', event.error);
+            let errorMessage = 'Ocurrió un error con la búsqueda por voz.';
+            if (event.error === 'no-speech') { errorMessage = 'No se detectó voz. Inténtalo de nuevo.'; }
+            else if (event.error === 'audio-capture') { errorMessage = 'Problema al capturar audio. Verifica el micrófono.'; }
+            else if (event.error === 'not-allowed') { errorMessage = 'Permiso de micrófono denegado. Habilítalo en tu navegador.'; }
+            else if (event.error === 'network') { errorMessage = 'Error de red para el reconocimiento de voz.';}
+
+            if (voiceSearchStatus) voiceSearchStatus.textContent = errorMessage;
+            else console.log("DEBUG: voiceSearchStatus es null, no se puede mostrar mensaje de error:", errorMessage);
+            
+            // Asegurarse de que el botón se reactive si hay un error que no sea 'no-speech' que a veces no llama a onend.
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = false;
+                voiceSearchBtn.innerHTML = '🎤';
+            }
+        };
+
+        recognition.onend = () => { // <<--- ONEND AHORA ESTÁ EN EL NIVEL CORRECTO
+            console.log("DEBUG: recognition.onend - El reconocimiento de voz ha finalizado.");
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = false;
+                voiceSearchBtn.innerHTML = '🎤';
+            }
         };
 
     } else {
-        voiceSearchBtn.style.display = 'none';
+        console.warn('DEBUG: Web Speech API no es compatible con este navegador.');
+        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
         if (voiceSearchStatus) {
             voiceSearchStatus.textContent = 'La búsqueda por voz no es compatible con tu navegador.';
         }
-        console.warn('Web Speech API no es compatible con este navegador.');
     }
 });
 </script>
