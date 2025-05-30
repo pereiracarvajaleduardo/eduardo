@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Inicio - Gestor de Planos{% endblock %}
+{% block title %}Inicio - Digital Plans{% endblock %}
 
 {% block content %}
 <div class="px-4 py-5 my-5 text-center">
-    <h1 class="display-5 fw-bold">Bienvenido al Gestor de Planos PDF</h1>
+    <h1 class="display-5 fw-bold">Bienvenido a Digital Plans</h1>
     <div class="col-lg-6 mx-auto">
-        <p class="lead mb-4">
-            Sube y gestiona tus planos PDF almacenados de forma segura en Cloudflare R2.
+        <p class="lead mb-4">    
         </p>
         <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
             <a href="{{ url_for('upload_pdf') }}" class="btn btn-primary btn-lg px-4 gap-3">Subir un Plano PDF</a>
