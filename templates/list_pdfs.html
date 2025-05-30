@@ -124,8 +124,12 @@ document.addEventListener('DOMContentLoaded', () => {
             searchInput.value = transcript;
             if (voiceSearchStatus) voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
             // Opcional: Enviar el formulario automáticamente
-            // searchInput.form.submit();
-        };
+            if (searchInput && searchInput.form) {
+    console.log("DEBUG: Enviando formulario automáticamente...");
+    searchInput.form.submit();
+} else {
+    console.error("DEBUG: No se puede enviar el formulario automáticamente, searchInput o searchInput.form no encontrados.");
+}
 
         recognition.onerror = (event) => {
             console.error('Error en el reconocimiento de voz:', event.error);
