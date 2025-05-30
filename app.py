@@ -1,4 +1,4 @@
-# === VERSIÓN CON AJUSTES PARA POSTGRESQL FTS MULTILINGÜE BÁSIC ===
+# === clave de acceso ===
 import os
 import re
 from datetime import datetime, timezone
