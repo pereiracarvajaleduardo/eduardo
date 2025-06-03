@@ -1,0 +1,268 @@
+/* Estilos generales del cuerpo y fuentes base */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f4f7f6; /* Un color de fondo suave */
+    color: #333;
+    line-height: 1.6;
+}
+
+h1, h2, h3 {
+    color: #2c3e50; /* Un color más oscuro para los encabezados */
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+hr { /* NUEVO: Estilo para los separadores */
+    border: 0;
+    height: 1px;
+    background-color: #ddd;
+    margin: 20px 0;
+}
+
+/* Contenedores principales de controles */
+.controls-container,
+.calibration-container,
+.measurements-log { /* MODIFICADO: measurements-log añadido aquí para consistencia */
+    background-color: #fff;
+    padding: 20px; /* Aumentado ligeramente el padding */
+    margin-bottom: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.08); /* Sombra un poco más pronunciada */
+}
+
+/* Estilos para botones e inputs - NUEVO */
+button,
+input[type="file"],
+input[type="number"],
+select {
+    padding: 10px 15px;
+    margin: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out; /* Transiciones suaves */
+}
+
+button {
+    background-color: #007bff; /* Azul primario */
+    color: white;
+    border-color: #007bff;
+}
+
+button:hover {
+    background-color: #0056b3; /* Azul más oscuro al pasar el ratón */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+button:active {
+    background-color: #004085; /* Aún más oscuro al hacer clic */
+}
+
+/* Estilos específicos para botones de cancelar o con estado especial */
+button[style*="background-color: #dc3545"] { /* Para botones rojos (Cancelar) */
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+button[style*="background-color: #dc3545"]:hover {
+    background-color: #c82333;
+}
+button[style*="background-color: #28a745"] { /* Para botones verdes (Finalizar Forma) */
+    background-color: #28a745;
+    border-color: #28a745;
+}
+button[style*="background-color: #28a745"]:hover {
+    background-color: #218838;
+}
+
+
+input[type="file"] {
+    cursor: pointer;
+}
+
+input[type="number"],
+select {
+    min-width: 150px; /* Para que los selects y number inputs tengan un tamaño decente */
+}
+
+label { /* NUEVO: Margen para las etiquetas */
+    margin-right: 8px;
+    margin-left: 5px; /* Para separar de otros elementos si están en línea */
+    display: inline-block; /* Para que el margen funcione bien */
+    margin-bottom: 5px; /* Espacio si se apilan */
+}
+
+/* Contenedor de los canvas */
+.canvas-wrapper {
+    position: relative;
+    width: fit-content; /* Se ajusta al contenido, pero se puede hacer responsivo */
+    /* MODIFICADO: Usar max-width para responsividad y permitir que se encoja */
+    max-width: 100%; 
+    margin: 20px auto; /* Centrar y añadir margen inferior */
+    border: 1px solid #ccc;
+    overflow: auto; /* NUEVO: Añadir scroll si el canvas es más grande que el wrapper (útil en móvil) */
+    background-color: #e9ecef; /* Un fondo para el área del canvas si es más grande que el PDF */
+}
+
+#pdf-canvas {
+    display: block;
+    /* El JS establece el tamaño. Si el PDF es grande, .canvas-wrapper con overflow:auto lo manejará */
+}
+
+#measure-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none; /* JS lo cambia a 'auto' cuando se necesita interactuar */
+    /* El JS establece el tamaño para coincidir con pdf-canvas */
+    /* El cursor se cambia con JS: default o crosshair */
+}
+
+/* Registro de Mediciones (tus estilos existentes, ligeramente ajustados) */
+.measurements-log {
+    /* Estilos base ya definidos arriba */
+}
+
+#measurements-list {
+    list-style: none;
+    padding: 0;
+    max-height: 200px; /* Mantenemos altura máxima y scroll */
+    overflow-y: auto;
+    border: 1px solid #eee;
+    margin-top: 10px; /* Espacio antes de la lista */
+    margin-bottom: 10px;
+    border-radius: 4px; /* Bordes redondeados para la lista también */
+}
+
+#measurements-list li {
+    padding: 8px 10px; /* Un poco más de padding */
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.95em; /* Ligeramente más pequeño para la lista */
+}
+
+#measurements-list li:last-child {
+    border-bottom: none;
+}
+
+/* Spans de estado y coordenadas - NUEVO */
+#measure-status,
+#calibration-status,
+#current-scale-info,
+#zoom-level-info,
+#screen-coords,
+#pdf-coords {
+    display: inline-block; /* Para que el margen/padding se aplique bien */
+    margin-left: 10px;
+    padding: 5px 8px;
+    background-color: #e9ecef; /* Fondo sutil */
+    border-radius: 4px;
+    font-size: 0.9em;
+    min-width: 50px; /* Para que no salten tanto al cambiar el texto */
+    text-align: left; /* Alineación por si acaso */
+}
+
+/* Estilos para el div de input de calibración - NUEVO */
+#calibration-input-div {
+    padding: 15px;
+    border: 1px dashed #007bff; /* Borde distintivo */
+    margin-top: 10px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+}
+#calibration-input-div label {
+    display: block; /* Cada label en su propia línea */
+    margin-bottom: 5px;
+}
+#calibration-input-div input[type="number"],
+#calibration-input-div button {
+    margin-top: 5px;
+    width: calc(100% - 10px); /* Ocupar ancho disponible, restando márgenes */
+    box-sizing: border-box; /* Para que el padding/border no aumente el ancho */
+}
+
+
+/* --- ESTILOS RESPONSIVOS (Media Queries) --- NUEVO --- */
+@media (max-width: 768px) {
+    body {
+        padding: 10px; /* Menos padding en pantallas pequeñas */
+    }
+
+    h1 {
+        font-size: 1.8em; /* Ajustar tamaño de encabezado principal */
+        margin-bottom: 20px;
+    }
+    h2 {
+        font-size: 1.4em;
+    }
+    h3 {
+        font-size: 1.1em;
+    }
+
+    .controls-container,
+    .calibration-container,
+    .measurements-log {
+        padding: 15px; /* Ajustar padding de contenedores */
+    }
+    
+    /* Apilar controles en pantallas pequeñas */
+    .controls-container, .calibration-container > .calibration-method {
+        display: flex;
+        flex-direction: column;
+        gap: 10px; /* Espacio entre elementos flexionados */
+    }
+    
+    .calibration-container > .calibration-method > label,
+    .calibration-container > .calibration-method > select,
+    .calibration-container > .calibration-method > button,
+    .calibration-container > .calibration-method > input[type="number"] {
+        width: 100%; /* Que los controles ocupen el ancho */
+        box-sizing: border-box;
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+
+    button,
+    input[type="file"],
+    input[type="number"],
+    select {
+        padding: 12px; /* Botones e inputs más grandes para el tacto */
+        font-size: 1em; /* Asegurar que el texto sea legible */
+    }
+    
+    #measure-status, /* Spans de estado también pueden necesitar ajustes */
+    #calibration-status,
+    #current-scale-info,
+    #zoom-level-info {
+        display: block; /* Que ocupen su propia línea */
+        margin-left: 0;
+        margin-top: 8px;
+        text-align: center;
+    }
+
+    .canvas-wrapper {
+        /* El overflow: auto ya ayuda mucho. El JS establece el tamaño del canvas. */
+        /* Si el PDF es muy ancho, el usuario podrá hacer scroll horizontal dentro del wrapper. */
+        /* Podrías querer que el PDF siempre se ajuste al ancho, pero eso requiere re-renderizar el PDF con JS
+           a una escala calculada para el ancho del dispositivo, lo cual es más complejo. */
+        border: none; /* Quizás quitar el borde en móvil */
+    }
+}
+
+@media (max-width: 480px) {
+    /* Ajustes aún más específicos para pantallas muy pequeñas si es necesario */
+    h1 {
+        font-size: 1.5em;
+    }
+    button,
+    input[type="file"],
+    input[type="number"],
+    select {
+        font-size: 0.95em; /* Ligeramente más pequeño si es necesario, pero priorizar legibilidad */
+    }
+}

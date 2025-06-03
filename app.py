@@ -6,7 +6,8 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, redirect, url_for, flash
+# MODIFICADO: Asegúrate que todos los imports de Flask necesarios estén presentes
+from flask import Flask, render_template, request, redirect, url_for, flash # send_from_directory (no usado directamente aquí pero útil para static)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Index, func
 from sqlalchemy.dialects.postgresql import TSVECTOR
@@ -17,7 +18,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import spacy
 from langdetect import detect as lang_detect_func, LangDetectException # Para detección de idioma
-# MODIFICACION: Añadir importaciones necesarias
 from deep_translator import GoogleTranslator # Para la traducción en la búsqueda
 import io # Para manejar streams de bytes en la edición
 
@@ -25,7 +25,7 @@ import io # Para manejar streams de bytes en la edición
 load_dotenv()
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
-app = Flask(__name__)
+app = Flask(__name__) # Flask app se instancia aquí
 app.secret_key = os.getenv('SECRET_KEY', os.urandom(24))
 
 # --- Configuración de la Base de Datos (PostgreSQL o SQLite local) ---
@@ -80,14 +80,14 @@ class Plano(db.Model):
 
 # --- Carga Global de Modelos spaCy ---
 NLP_ES = None
-NLP_EN = None # Para inglés
+NLP_EN = None 
 try:
     NLP_ES = spacy.load("es_core_news_sm")
     app.logger.info("Modelo spaCy 'es_core_news_sm' cargado.")
 except Exception as e_es:
     app.logger.error(f"FALLO AL CARGAR MODELO spaCy 'es_core_news_sm': {e_es}. Lematización en español deshabilitada.")
 try:
-    NLP_EN = spacy.load("en_core_web_sm") # Modelo pequeño para inglés
+    NLP_EN = spacy.load("en_core_web_sm") 
     app.logger.info("Modelo spaCy 'en_core_web_sm' cargado.")
 except Exception as e_en:
     app.logger.error(f"FALLO AL CARGAR MODELO spaCy 'en_core_web_sm': {e_en}. Lematización en inglés deshabilitada.")
@@ -116,7 +116,7 @@ def get_s3_client():
         client = boto3.client(
             's3',endpoint_url=R2_ENDPOINT_URL,
             aws_access_key_id=R2_ACCESS_KEY_ID, aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            config=Config(signature_version='s3v4'), region_name='auto'
+            config=Config(signature_version='s3v4'), region_name='auto' # aws_region -> region_name
         )
         return client
     except Exception as e:
@@ -184,12 +184,12 @@ def extraer_texto_completo_pdf(pdf_file_stream, max_paginas=6):
                 texto_pagina = page.extract_text(x_tolerance=2, y_tolerance=2)
                 if texto_pagina:
                     texto_completo.append(texto_pagina)
-                    if i < 2 : # Usar texto de las primeras 2 páginas (o menos si hay menos) para detección
+                    if i < 2 : 
                         texto_para_deteccion += texto_pagina + " "
             
             if texto_para_deteccion.strip():
                 try:
-                    lang_code = lang_detect_func(texto_para_deteccion[:1000]) # langdetect con muestra
+                    lang_code = lang_detect_func(texto_para_deteccion[:1000]) 
                     if lang_code == 'en':
                         idioma_detectado_pdf = 'english'
                     app.logger.info(f"Idioma detectado para el PDF: {lang_code} -> {idioma_detectado_pdf}")
@@ -260,14 +260,14 @@ def logout():
 @app.route('/')
 def index():
     if R2_CONFIG_MISSING:
-        flash("ADVERTENCIA: La configuración para R2 no está completa.", "danger")
-    return render_template('index.html')
+        flash("ADVERTENCIA: La configuración para R2 no está completa. Algunas funcionalidades pueden estar limitadas.", "danger")
+    return render_template('index.html') # Este es el index.html principal de tu aplicación
 
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
 def upload_pdf():
-    if current_user.role not in ['admin', 'cargador']: flash('No tienes permiso.', 'danger'); return redirect(url_for('index'))
-    if R2_CONFIG_MISSING: flash("Subida deshabilitada por error de config.", "danger"); return redirect(url_for('index'))
+    if current_user.role not in ['admin', 'cargador']: flash('No tienes permiso para subir planos.', 'danger'); return redirect(url_for('index'))
+    if R2_CONFIG_MISSING: flash("Subida de archivos deshabilitada: Faltan configuraciones de R2.", "danger"); return redirect(url_for('index'))
 
     if request.method == 'POST':
         pdf_file = request.files.get('pdf_file')
@@ -276,9 +276,9 @@ def upload_pdf():
         area_form = request.form.get('area', '').strip()
         descripcion_form = request.form.get('descripcion', '').strip()
 
-        if not pdf_file or not pdf_file.filename: flash('No se seleccionó archivo.', 'warning'); return redirect(request.url)
-        if not codigo_plano_form or not revision_form: flash('Código y Revisión obligatorios.', 'warning'); return redirect(request.url)
-        if not pdf_file.filename.lower().endswith('.pdf'): flash('Solo PDF.', 'warning'); return redirect(request.url)
+        if not pdf_file or not pdf_file.filename: flash('No se seleccionó ningún archivo.', 'warning'); return redirect(request.url)
+        if not codigo_plano_form or not revision_form: flash('Los campos Código de Plano y Revisión son obligatorios.', 'warning'); return redirect(request.url)
+        if not pdf_file.filename.lower().endswith('.pdf'): flash('Formato de archivo no válido. Solo se permiten archivos PDF.', 'warning'); return redirect(request.url)
         
         area_final_determinada = None
         es_mr = codigo_plano_form.upper().startswith("K484-0000-0000-MR-")
@@ -289,14 +289,14 @@ def upload_pdf():
                     if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
                     area_extraida = extraer_area_del_pdf(pdf_file.stream)
                     area_final_determinada = area_extraida if area_extraida else "Area_MR_Pendiente"
-                    flash(f"Área MR: '{area_final_determinada}'.", "info" if area_extraida else "warning")
+                    flash(f"Área del plano MR determinada como: '{area_final_determinada}'.", "info" if area_extraida else "warning")
                 except Exception as e_area:
-                    area_final_determinada = "Area_MR_Error"; flash("Error extrayendo área MR.", "warning")
-                    app.logger.error(f"Error extrayendo área MR: {e_area}", exc_info=True)
+                    area_final_determinada = "Area_MR_Error"; flash("Error extrayendo el área del plano MR.", "warning")
+                    app.logger.error(f"Error extrayendo área para plano MR: {e_area}", exc_info=True)
         else: 
             if area_form: area_final_determinada = area_form
-            else: flash('Campo "Área" obligatorio para no-MR.', 'warning'); return redirect(request.url)
-        if area_final_determinada is None: flash('Error: Área no determinada.', 'danger'); return redirect(request.url)
+            else: flash('El campo "Área" es obligatorio para planos no-MR.', 'warning'); return redirect(request.url)
+        if area_final_determinada is None: flash('Error crítico: Área no determinada para el plano.', 'danger'); return redirect(request.url)
 
         original_filename_secure = secure_filename(pdf_file.filename)
         cleaned_area = clean_for_path(area_final_determinada); cleaned_codigo = clean_for_path(codigo_plano_form)
@@ -304,13 +304,12 @@ def upload_pdf():
         r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision}.pdf"; r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
         
         s3 = get_s3_client()
-        if not s3: flash("Error config R2.", "danger"); return redirect(request.url)
+        if not s3: flash("Error en la configuración de R2. No se puede subir el archivo.", "danger"); return redirect(request.url)
 
         try:
             planos_existentes_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_form).all()
             plano_para_actualizar_o_crear = None
             
-            # MODIFICACION: Listas para manejar eliminaciones de R2 y BD de forma más limpia
             r2_object_keys_a_eliminar = []
             db_entries_a_eliminar = []
 
@@ -335,12 +334,10 @@ def upload_pdf():
                     app.logger.info(f"Actualizando plano existente (misma revisión): {codigo_plano_form} Rev {revision_form}")
                     plano_para_actualizar_o_crear = plano_con_revision_ingresada
                     if plano_para_actualizar_o_crear.r2_object_key and plano_para_actualizar_o_crear.r2_object_key != r2_object_key_nuevo:
-                        # MODIFICACION: Añadir a la lista de claves R2 a eliminar
                         r2_object_keys_a_eliminar.append(plano_para_actualizar_o_crear.r2_object_key)
                 elif revision_actual_mas_alta_db_str is None or es_revision_mas_nueva(revision_form, revision_actual_mas_alta_db_str): 
-                    app.logger.info(f"Nueva revisión '{revision_form}' es la más alta. Marcando antiguas para eliminación.")
+                    app.logger.info(f"Nueva revisión '{revision_form}' es la más alta para el código {codigo_plano_form}. Marcando revisiones antiguas para eliminación.")
                     for p_antiguo in planos_existentes_mismo_codigo:
-                        # MODIFICACION: Añadir a listas de eliminación
                         if p_antiguo.r2_object_key:
                             r2_object_keys_a_eliminar.append(p_antiguo.r2_object_key)
                         db_entries_a_eliminar.append(p_antiguo)
@@ -351,11 +348,11 @@ def upload_pdf():
                     )
                     db.session.add(plano_para_actualizar_o_crear)
                 else: 
-                    flash(f"Revisión '{revision_form}' no es más reciente. Rev. más alta: '{revision_actual_mas_alta_db_str}'. No procesado.", "warning")
+                    flash(f"La revisión '{revision_form}' no es más reciente que la existente ('{revision_actual_mas_alta_db_str}') para el plano {codigo_plano_form}. No se procesó.", "warning")
                     return redirect(request.url)
 
             if not plano_para_actualizar_o_crear:
-                raise Exception("Error determinando plano a crear/actualizar.")
+                raise Exception("Error determinando el plano a crear o actualizar en la lógica de subida.")
 
             plano_para_actualizar_o_crear.area = area_final_determinada
             plano_para_actualizar_o_crear.r2_object_key = r2_object_key_nuevo
@@ -368,7 +365,7 @@ def upload_pdf():
                 if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
                 texto_completo_pdf, idioma_doc_detectado = extraer_texto_completo_pdf(pdf_file.stream)
             except Exception as e_extr_texto:
-                app.logger.error(f"Fallo al extraer texto/idioma del PDF: {e_extr_texto}", exc_info=True)
+                app.logger.error(f"Fallo al extraer texto/idioma del PDF durante la subida: {e_extr_texto}", exc_info=True)
                 flash("ADVERTENCIA: Hubo un problema al leer el contenido del PDF. La búsqueda por contenido podría no funcionar para este archivo.", "warning")
             
             plano_para_actualizar_o_crear.idioma_documento = idioma_doc_detectado
@@ -376,14 +373,14 @@ def upload_pdf():
             try:
                 if hasattr(pdf_file.stream, 'seek'): pdf_file.stream.seek(0)
                 s3.upload_fileobj(pdf_file.stream, R2_BUCKET_NAME, r2_object_key_nuevo)
-                app.logger.info(f"Archivo '{r2_object_key_nuevo}' subido a R2.")
+                app.logger.info(f"Archivo '{r2_object_key_nuevo}' subido a R2 exitosamente.")
             except ClientError as e_s3:
                 db.session.rollback()
-                flash(f"Error de conexión al subir: {e_s3.response.get('Error', {}).get('Message', 'Error R2')}", "danger")
+                flash(f"Error de conexión al subir el archivo a R2: {e_s3.response.get('Error', {}).get('Message', 'Error R2 desconocido')}", "danger")
                 return redirect(request.url)
             
             if plano_para_actualizar_o_crear not in db.session and not db.session.is_modified(plano_para_actualizar_o_crear):
-                db.session.add(plano_para_actualizar_o_crear)
+                db.session.add(plano_para_actualizar_o_crear) # Asegurar que se añade si es nuevo y no fue añadido antes
             db.session.flush() 
             plano_id_actual = plano_para_actualizar_o_crear.id
 
@@ -393,8 +390,7 @@ def upload_pdf():
                 texto_completo_pdf, idioma_doc_detectado
             )
             
-            # MODIFICACION: Eliminar objetos R2 antiguos usando la nueva lista
-            for r2_key in set(r2_object_keys_a_eliminar): # Usar set para evitar borrados duplicados
+            for r2_key in set(r2_object_keys_a_eliminar): 
                 if r2_key and r2_key != r2_object_key_nuevo: 
                     try:
                         s3.delete_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
@@ -402,21 +398,21 @@ def upload_pdf():
                     except Exception as e_del_r2:
                         app.logger.error(f"Error borrando objeto R2 antiguo '{r2_key}': {e_del_r2}")
             
-            # MODIFICACION: Eliminar registros de DB antiguos usando la nueva lista
             for plano_db_a_borrar in db_entries_a_eliminar:
-                app.logger.info(f"Eliminando registro de DB para plano ID {plano_db_a_borrar.id}")
+                app.logger.info(f"Eliminando registro de BD para plano ID {plano_db_a_borrar.id} ({plano_db_a_borrar.codigo_plano} Rev {plano_db_a_borrar.revision}).")
                 db.session.delete(plano_db_a_borrar)
             
             db.session.commit()
-            flash(f"Plano '{codigo_plano_form}' Rev '{revision_form}' procesado.", "success")
+            flash(f"Plano '{codigo_plano_form}' Revisión '{revision_form}' procesado y guardado exitosamente.", "success")
             return redirect(url_for('list_pdfs'))
 
         except Exception as e_general:
             db.session.rollback()
-            flash(f"Error general procesando archivo: {str(e_general)}", "danger")
-            app.logger.error(f"Error general en upload/DB: {e_general}", exc_info=True)
+            flash(f"Error general al procesar el archivo: {str(e_general)}", "danger")
+            app.logger.error(f"Error general en la ruta /upload o durante las operaciones con la base de datos/R2: {e_general}", exc_info=True)
             return redirect(request.url)
     return render_template('upload_pdf.html')
+
 
 @app.route('/pdfs')
 @login_required
@@ -450,7 +446,6 @@ def list_pdfs():
             termino_traducido_en = ""
             if query_contenido_original.strip():
                 try:
-                    # MODIFICACION: Uso de GoogleTranslator (ya importado)
                     termino_traducido_en = GoogleTranslator(source='auto', target='en').translate(query_contenido_original)
                     app.logger.info(f"Consulta original '{query_contenido_original}' traducida a inglés: '{termino_traducido_en}'")
                 except Exception as e_translate:
@@ -478,19 +473,19 @@ def list_pdfs():
         flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
         app.logger.error(f"Error en la ruta /pdfs: {e}", exc_info=True)
         planos_db = [] 
-    return render_template('list_pdfs.html', planos=planos_db, R2_OBJECT_PREFIX=R2_OBJECT_PREFIX)
+    return render_template('list_pdfs.html', planos=planos_db, R2_OBJECT_PREFIX=R2_OBJECT_PREFIX, R2_ENDPOINT_URL=R2_ENDPOINT_URL, R2_BUCKET_NAME=R2_BUCKET_NAME)
 
 
-@app.route('/pdfs/view/<path:object_key>')
+@app.route('/pdfs/view/<path:object_key>') # Esta ruta ya genera pre-signed URLs, la nueva la usará internamente
 @login_required
 def view_pdf(object_key):
-    if R2_CONFIG_MISSING: flash("Visualización deshabilitada.", "danger"); return redirect(url_for('list_pdfs'))
+    if R2_CONFIG_MISSING: flash("Visualización de PDF deshabilitada: Faltan configuraciones de R2.", "danger"); return redirect(url_for('list_pdfs'))
     s3 = get_s3_client()
-    if not s3: flash("Error R2.", "danger"); return redirect(url_for('list_pdfs'))
+    if not s3: flash("Error en la configuración de R2. No se puede visualizar el PDF.", "danger"); return redirect(url_for('list_pdfs'))
     try:
         presigned_url = s3.generate_presigned_url('get_object', Params={'Bucket': R2_BUCKET_NAME, 'Key': object_key}, ExpiresIn=3600)
         return redirect(presigned_url)
-    except Exception as e: flash(f"Error enlace: {str(e)}", "danger"); app.logger.error(f"Error URL: {e}", exc_info=True)
+    except Exception as e: flash(f"Error al generar enlace para el PDF: {str(e)}", "danger"); app.logger.error(f"Error generando URL pre-firmada para {object_key}: {e}", exc_info=True)
     return redirect(url_for('list_pdfs'))
 
 @app.route('/plano/edit/<int:plano_id>', methods=['GET', 'POST'])
@@ -501,7 +496,7 @@ def edit_plano(plano_id):
         return redirect(url_for('list_pdfs'))
 
     plano_a_editar = Plano.query.get_or_404(plano_id)
-    s3 = get_s3_client() # s3 client para operaciones R2
+    s3 = get_s3_client() 
 
     if request.method == 'POST':
         nueva_revision_form = request.form.get('revision', '').strip()
@@ -516,11 +511,10 @@ def edit_plano(plano_id):
         
         nueva_area_limpia = clean_for_path(nueva_area_form)
         nueva_revision_limpia = clean_for_path(nueva_revision_form)
-        codigo_plano_limpio = clean_for_path(plano_a_editar.codigo_plano) # Código no cambia
+        codigo_plano_limpio = clean_for_path(plano_a_editar.codigo_plano) 
         nuevo_r2_filename = f"{codigo_plano_limpio}_Rev{nueva_revision_limpia}.pdf"
         nueva_r2_object_key = f"{R2_OBJECT_PREFIX}{nueva_area_limpia}/{nuevo_r2_filename}"
         
-        # Validaciones de conflicto
         if nueva_revision_form != plano_a_editar.revision:
             conflicto_revision = Plano.query.filter(
                 Plano.codigo_plano == plano_a_editar.codigo_plano,
@@ -533,25 +527,22 @@ def edit_plano(plano_id):
         if nueva_r2_object_key != antigua_r2_object_key:
             conflicto_r2_key = Plano.query.filter( Plano.r2_object_key == nueva_r2_object_key, Plano.id != plano_id ).first()
             if conflicto_r2_key:
-                flash(f"Error: La ruta de archivo generada '{nueva_r2_object_key}' ya está en uso.", "danger")
+                flash(f"Error: La ruta de archivo generada '{nueva_r2_object_key}' ya está en uso por otro plano.", "danger")
                 return render_template('edit_plano.html', plano=plano_a_editar)
 
         try:
             pdf_file_edit = request.files.get('pdf_file_edit')
             
-            # Actualizar metadatos del objeto plano en memoria primero
             plano_a_editar.revision = nueva_revision_form
             plano_a_editar.area = nueva_area_form
             plano_a_editar.descripcion = nueva_descripcion_form
-            # La r2_object_key se actualiza ANTES de mover/subir, para que las operaciones usen la nueva clave
             plano_a_editar.r2_object_key = nueva_r2_object_key 
             plano_a_editar.fecha_subida = datetime.now(timezone.utc)
 
-            # MODIFICACION: Lógica para FTS y manejo de archivos en edición
             texto_completo_pdf_para_fts = "" 
-            idioma_doc_para_fts = plano_a_editar.idioma_documento # Usar idioma existente por defecto
+            idioma_doc_para_fts = plano_a_editar.idioma_documento 
 
-            if pdf_file_edit and pdf_file_edit.filename: # Si se sube un nuevo archivo PDF
+            if pdf_file_edit and pdf_file_edit.filename: 
                 if not pdf_file_edit.filename.lower().endswith('.pdf'):
                     flash('Solo se permiten archivos PDF para reemplazar.', 'warning')
                     return render_template('edit_plano.html', plano=plano_a_editar)
@@ -563,10 +554,10 @@ def edit_plano(plano_id):
                 try:
                     if hasattr(pdf_file_edit.stream, 'seek'): pdf_file_edit.stream.seek(0)
                     texto_completo_pdf_para_fts, idioma_doc_para_fts = extraer_texto_completo_pdf(pdf_file_edit.stream)
-                    plano_a_editar.idioma_documento = idioma_doc_para_fts # Actualizar idioma del plano
+                    plano_a_editar.idioma_documento = idioma_doc_para_fts 
                     
                     if hasattr(pdf_file_edit.stream, 'seek'): pdf_file_edit.stream.seek(0)
-                    s3.upload_fileobj(pdf_file_edit.stream, R2_BUCKET_NAME, nueva_r2_object_key) # Subir a la nueva clave
+                    s3.upload_fileobj(pdf_file_edit.stream, R2_BUCKET_NAME, nueva_r2_object_key) 
                     app.logger.info(f"Nuevo archivo PDF subido a R2: '{nueva_r2_object_key}'")
 
                     if antigua_r2_object_key and antigua_r2_object_key != nueva_r2_object_key:
@@ -583,9 +574,8 @@ def edit_plano(plano_id):
                     app.logger.error(f"Error procesando/subiendo nuevo PDF en edición: {e_upload_edit}", exc_info=True)
                     return render_template('edit_plano.html', plano=plano_a_editar)
             
-            else: # No se subió un nuevo archivo PDF, pero los metadatos o la clave R2 podrían haber cambiado
+            else: 
                 if nueva_r2_object_key != antigua_r2_object_key and antigua_r2_object_key and s3:
-                    # Mover el objeto en R2 si la clave ha cambiado (solo por metadatos)
                     app.logger.info(f"Moviendo en R2 de '{antigua_r2_object_key}' a '{nueva_r2_object_key}' (solo metadatos cambiaron)")
                     try:
                         copy_source = {'Bucket': R2_BUCKET_NAME, 'Key': antigua_r2_object_key}
@@ -596,67 +586,55 @@ def edit_plano(plano_id):
                         db.session.rollback()
                         flash(f"Error al mover el archivo en R2: {str(e_move_r2)}", "danger")
                         app.logger.error(f"Error moviendo objeto en R2 durante edición de metadatos: {e_move_r2}", exc_info=True)
-                        # Restaurar la clave R2 original en el objeto si el movimiento falló, antes de renderizar
                         plano_a_editar.r2_object_key = antigua_r2_object_key 
                         return render_template('edit_plano.html', plano=plano_a_editar)
 
-                # Ahora, obtener el contenido del PDF (ya sea el original o el recién movido) para FTS
                 app.logger.info(f"No se subió un nuevo PDF. Se usará el contenido del PDF en '{plano_a_editar.r2_object_key}' para FTS.")
                 if s3 and plano_a_editar.r2_object_key:
                     try:
                         response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano_a_editar.r2_object_key)
                         pdf_content_stream = response['Body']
                         pdf_bytes = pdf_content_stream.read()
-                        pdf_file_like_object = io.BytesIO(pdf_bytes) # Usar io.BytesIO
+                        pdf_file_like_object = io.BytesIO(pdf_bytes) 
                         
                         texto_completo_pdf_para_fts, _ = extraer_texto_completo_pdf(pdf_file_like_object)
-                        idioma_doc_para_fts = plano_a_editar.idioma_documento # El idioma no cambia si el archivo es el mismo
+                        idioma_doc_para_fts = plano_a_editar.idioma_documento 
                         app.logger.info(f"Texto extraído del PDF existente/movido en R2 para FTS del plano ID {plano_id}.")
                     except Exception as e_download_extract:
                         app.logger.error(f"No se pudo descargar o re-extraer texto del PDF en '{plano_a_editar.r2_object_key}' de R2: {e_download_extract}", exc_info=True)
                         flash(f"Advertencia: No se pudo actualizar el contenido del PDF en la búsqueda. Los metadatos sí se actualizarán.", "warning")
-                        # texto_completo_pdf_para_fts permanecerá vacío, FTS se actualizará solo con metadatos.
                 else:
                     app.logger.warning(f"No hay cliente S3 o R2 object key para el plano ID {plano_id} tras posible edición de metadatos. El FTS se actualizará solo con metadatos.")
-            
-            # Fin de la MODIFICACION para FTS y manejo de archivos
             
             actualizar_tsvector_plano(
                 plano_id_val=plano_a_editar.id,
                 codigo_plano_val=plano_a_editar.codigo_plano, 
-                area_val=plano_a_editar.area, # Usar el valor ya actualizado en el objeto
-                descripcion_val=plano_a_editar.descripcion, # Usar el valor ya actualizado
+                area_val=plano_a_editar.area, 
+                descripcion_val=plano_a_editar.descripcion, 
                 contenido_pdf_val=texto_completo_pdf_para_fts,
                 idioma_doc=idioma_doc_para_fts
             )
             
             db.session.commit()
-            flash(f"Plano '{plano_a_editar.codigo_plano}' actualizado.", "success")
+            flash(f"Plano '{plano_a_editar.codigo_plano}' actualizado exitosamente.", "success")
             return redirect(url_for('list_pdfs'))
 
         except Exception as e:
             db.session.rollback()
-            flash(f"Error al actualizar: {str(e)}", "danger")
+            flash(f"Error al actualizar el plano: {str(e)}", "danger")
             app.logger.error(f"Error editando plano ID {plano_id}: {e}", exc_info=True)
-            # Si hubo un error, la r2_object_key podría haber sido modificada en el objeto plano_a_editar
-            # pero la transacción se revirtió. Para evitar mostrar datos inconsistentes en el template si se re-renderiza,
-            # es mejor recargar el objeto desde la BD o invalidarlo.
-            # Sin embargo, get_or_404 ya lo carga fresco al inicio de la petición GET.
-            # Para el POST, si falla y re-renderiza, plano_a_editar aún tiene los cambios del form.
-            # Podríamos recargarlo para mostrar el estado de la BD:
-            # plano_a_editar = Plano.query.get_or_404(plano_id) # Opcional, para mostrar datos "limpios" tras error.
     return render_template('edit_plano.html', plano=plano_a_editar)
 
 
 @app.route('/pdfs/delete/<int:plano_id>', methods=['POST'])
 @login_required
 def delete_pdf(plano_id):
-    if current_user.role not in ['admin', 'cargador']: flash('No tienes permiso.', 'danger'); return redirect(url_for('list_pdfs'))
-    if R2_CONFIG_MISSING: flash("Eliminación deshabilitada.", "danger"); return redirect(url_for('list_pdfs'))
+    if current_user.role not in ['admin', 'cargador']: flash('No tienes permiso para eliminar planos.', 'danger'); return redirect(url_for('list_pdfs'))
+    if R2_CONFIG_MISSING: flash("Eliminación de archivos deshabilitada: Faltan configuraciones de R2.", "danger"); return redirect(url_for('list_pdfs'))
     
     plano_a_eliminar = Plano.query.get_or_404(plano_id)
     s3 = get_s3_client()
-    if not s3: flash("Error R2.", "danger"); return redirect(url_for('list_pdfs'))
+    if not s3: flash("Error en la configuración de R2. No se puede eliminar el archivo.", "danger"); return redirect(url_for('list_pdfs'))
 
     r2_key_a_eliminar = plano_a_eliminar.r2_object_key
     try:
@@ -666,11 +644,71 @@ def delete_pdf(plano_id):
         
         db.session.delete(plano_a_eliminar)
         db.session.commit()
-        flash(f"Plano '{plano_a_eliminar.codigo_plano}' Rev '{plano_a_eliminar.revision}' eliminado.", "success")
+        flash(f"Plano '{plano_a_eliminar.codigo_plano}' Revisión '{plano_a_eliminar.revision}' eliminado exitosamente.", "success")
     except Exception as e:
-        db.session.rollback(); flash(f"Error eliminando: {str(e)}", "danger")
+        db.session.rollback(); flash(f"Error al eliminar el plano: {str(e)}", "danger")
         app.logger.error(f"Error eliminando plano ID {plano_id}: {e}", exc_info=True)
     return redirect(url_for('list_pdfs'))
+
+# ===========================================================
+# NUEVA RUTA PARA LA HERRAMIENTA DE MEDICIÓN DE PDF
+# ===========================================================
+@app.route('/medidor/plano/<path:object_key>')
+@login_required # Decide si esta herramienta requiere que el usuario esté logueado
+def visor_medidor_pdf(object_key):
+    app.logger.info(f"Accediendo al visor medidor para R2 object key: {object_key}")
+    
+    if R2_CONFIG_MISSING:
+        flash("La herramienta de medición no está disponible: Falta configuración de R2.", "danger")
+        # Redirigir a una página anterior o a la lista de planos
+        return redirect(request.referrer or url_for('list_pdfs'))
+
+    s3 = get_s3_client()
+    if not s3:
+        flash("Error al conectar con el almacenamiento de archivos (R2). No se puede cargar el visor.", "danger")
+        return redirect(request.referrer or url_for('list_pdfs'))
+
+    try:
+        # Generar URL pre-firmada para que el cliente acceda al PDF desde R2
+        pdf_presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': R2_BUCKET_NAME, 'Key': object_key},
+            ExpiresIn=3600  # Validez de 1 hora (3600 segundos)
+        )
+        app.logger.info(f"URL pre-firmada generada para {object_key}: {pdf_presigned_url[:100]}...") # Loguear solo una parte
+
+        # Generar la URL para el worker de PDF.js que se servirá desde la carpeta static de Flask
+        # Asegúrate que la ruta 'lib/pdfjs/build/pdf.worker.mjs' es correcta dentro de tu carpeta 'static'
+        pdf_worker_url = url_for('static', filename='lib/pdfjs/build/pdf.worker.mjs')
+        app.logger.info(f"URL para PDF.js worker: {pdf_worker_url}")
+        
+        # Obtener información del plano para el título de la página (opcional)
+        plano_info = Plano.query.filter_by(r2_object_key=object_key).first()
+        page_title = "Herramienta de Medición PDF"
+        if plano_info:
+            page_title = f"Medición: {plano_info.codigo_plano} Rev {plano_info.revision}"
+        else:
+            app.logger.warning(f"No se encontró información del plano en la BD para la R2 key: {object_key}")
+
+
+        return render_template(
+            'pdf_measure_viewer.html',  # Nombre de tu plantilla HTML para la herramienta
+            pdf_url_to_load=pdf_presigned_url,
+            pdf_worker_url=pdf_worker_url,
+            page_title=page_title
+        )
+
+    except ClientError as e_s3_presign:
+        flash(f"Error al generar el enlace seguro para el PDF: {e_s3_presign.response.get('Error', {}).get('Message', 'Error R2 desconocido')}", "danger")
+        app.logger.error(f"Error de Cliente S3 generando URL pre-firmada para {object_key}: {e_s3_presign}", exc_info=True)
+        return redirect(request.referrer or url_for('list_pdfs'))
+    except Exception as e:
+        flash(f"Error inesperado al preparar el visor de medición: {str(e)}", "danger")
+        app.logger.error(f"Error general en visor_medidor_pdf para {object_key}: {e}", exc_info=True)
+        return redirect(request.referrer or url_for('list_pdfs'))
+# ===========================================================
+# FIN DE LA NUEVA RUTA
+# ===========================================================
 
 # --- Bloque de Inicialización de la Aplicación ---
 with app.app_context():
@@ -683,7 +721,7 @@ with app.app_context():
             db.session.add(admin_user)
             db.session.commit()
             app.logger.info("Usuario 'admin' por defecto creado.")
-        except Exception as e: db.session.rollback(); app.logger.error(f"Error creando admin: {e}")
+        except Exception as e: db.session.rollback(); app.logger.error(f"Error creando usuario admin: {e}")
     if not User.query.filter_by(username='usuario').first():
         try:
             consultor_user = User(username='usuario', role='consultor')
@@ -691,14 +729,18 @@ with app.app_context():
             db.session.add(consultor_user)
             db.session.commit()
             app.logger.info("Usuario 'usuario' (consultor) por defecto creado.")
-        except Exception as e: db.session.rollback(); app.logger.error(f"Error creando consultor: {e}")
+        except Exception as e: db.session.rollback(); app.logger.error(f"Error creando usuario consultor: {e}")
     
-    app.logger.info("Contexto de aplicación inicializado: BD y usuarios por defecto verificados.")
+    app.logger.info("Contexto de aplicación inicializado: Base de datos y usuarios por defecto verificados.")
 
 # --- Punto de Entrada para Desarrollo Local ---
 if __name__ == '__main__':
     if R2_CONFIG_MISSING:
-        print("\nADVERTENCIA LOCAL: Faltan configuraciones para Cloudflare R2 en tu archivo .env.\n")
-    print("Iniciando servidor de desarrollo Flask local en http://127.0.0.1:5000")
+        print("\nADVERTENCIA LOCAL: Faltan configuraciones para Cloudflare R2 en tu archivo .env.")
+        print("La subida, visualización y medición de PDFs almacenados en R2 no funcionarán correctamente.\n")
+    print("Iniciando servidor de desarrollo Flask local.")
+    print(f"La aplicación debería estar disponible en http://127.0.0.1:{os.getenv('PORT', 5000)}")
     port = int(os.getenv('PORT', 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    # En producción, Render.com usará un servidor WSGI como Gunicorn.
+    # debug=True no se recomienda para producción. Render gestiona esto.
+    app.run(debug=os.getenv('FLASK_DEBUG', 'False').lower() in ['true', '1', 't'], host='0.0.0.0', port=port)

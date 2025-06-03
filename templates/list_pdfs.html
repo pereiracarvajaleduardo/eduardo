@@ -1,3 +1,4 @@
+{# Este es TU ARCHIVO templates/list_pdfs.html con la MODIFICACIÓN #}
 {% extends "base.html" %}
 
 {% block title %}Lista de Planos PDF{% endblock %}
@@ -58,14 +59,23 @@
                             <td>{{ plano_item.fecha_subida.strftime('%Y-%m-%d %H:%M') if plano_item.fecha_subida else 'N/A' }}</td>
                             <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>
                             <td>
-                                <a href="{{ url_for('view_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-outline-primary mb-1 d-block" target="_blank">Ver/Descargar</a>
-                                {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
-                                <a href="{{ url_for('edit_plano', plano_id=plano_item.id) }}" class="btn btn-sm btn-outline-secondary mb-1 d-block">Editar</a>
-                                <form action="{{ url_for('delete_pdf', plano_id=plano_item.id) }}" method="POST" style="display: inline;"
-                                      onsubmit="return confirm('¿Estás seguro de que quieres eliminar este plano? Esta acción no se puede deshacer.');">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger d-block w-100">Eliminar</button>
-                                </form>
-                                {% endif %}
+                                <div class="d-grid gap-1"> 
+                                    <a href="{{ url_for('view_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-outline-primary" target="_blank">Ver/Descargar</a>
+
+                                    {# ### ESTE ES EL ENLACE QUE DEBES AÑADIR O ASEGURARTE QUE ESTÉ ASÍ ### #}
+                                    {% if plano_item.r2_object_key %}
+                                        <a href="{{ url_for('visor_medidor_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-success">Medir Plano</a>
+                                    {% endif %}
+                                    {# ### FIN DEL ENLACE AÑADIDO/MODIFICADO ### #}
+
+                                    {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
+                                    <a href="{{ url_for('edit_plano', plano_id=plano_item.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
+                                    <form action="{{ url_for('delete_pdf', plano_id=plano_item.id) }}" method="POST" style="display: block;"
+                                          onsubmit="return confirm('¿Estás seguro de que quieres eliminar este plano? Esta acción no se puede deshacer.');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger w-100">Eliminar</button>
+                                    </form>
+                                    {% endif %}
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -83,117 +93,83 @@
         </div>
     </div>
 </div>
-
 {% endblock %}
 
 {% block scripts %}
 {{ super() }}
+{# Tu script existente para la búsqueda por voz se mantiene igual #}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DEBUG: DOMContentLoaded disparado. Buscando elementos...");
     const voiceSearchBtn = document.getElementById('voiceSearchBtn');
     const searchInput = document.getElementById('q_contenido');
     const voiceSearchStatus = document.getElementById('voiceSearchStatus');
 
-    console.log("DEBUG: voiceSearchBtn encontrado:", voiceSearchBtn);
-    console.log("DEBUG: searchInput encontrado:", searchInput);
-    console.log("DEBUG: voiceSearchStatus encontrado:", voiceSearchStatus);
-
-    if (!voiceSearchBtn) {
-        console.error("DEBUG: El botón voiceSearchBtn NO fue encontrado. Verifica el ID en el HTML.");
-        return;
-    }
-    if (!searchInput) {
-        console.error("DEBUG: El input searchInput (q_contenido) NO fue encontrado. Verifica el ID en el HTML.");
-    }
-    if (!voiceSearchStatus) {
-        console.warn("DEBUG: El elemento voiceSearchStatus NO fue encontrado. Los mensajes de estado no se mostrarán.");
+    if (!voiceSearchBtn || !searchInput || !voiceSearchStatus) {
+        console.warn("Algunos elementos para la búsqueda por voz no fueron encontrados.");
+        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
+        return; 
     }
 
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-        console.log("DEBUG: API SpeechRecognition compatible detectada.");
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
-
         recognition.lang = navigator.language || 'es-CL';
         recognition.continuous = false;
         recognition.interimResults = false;
-        console.log("DEBUG: Objeto recognition configurado con lang:", recognition.lang);
 
         voiceSearchBtn.addEventListener('click', () => {
-            console.log("DEBUG: Botón de micrófono clickeado.");
             try {
-                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Intentando iniciar reconocimiento...';
-                else console.log("DEBUG: voiceSearchStatus es null, no se puede mostrar mensaje 'Intentando iniciar'.")
-
-                console.log("DEBUG: Llamando a recognition.start()...");
+                voiceSearchStatus.textContent = 'Intentando iniciar reconocimiento...';
                 recognition.start();
             } catch(e) {
-                console.error("DEBUG: Error CATCH al intentar recognition.start():", e);
-                if (voiceSearchStatus) voiceSearchStatus.textContent = 'Error al iniciar. Revise la consola (F12).';
+                console.error("Error al intentar recognition.start():", e);
+                voiceSearchStatus.textContent = 'Error al iniciar. Revise la consola (F12).';
                 if(voiceSearchBtn) {
                     voiceSearchBtn.disabled = false;
                     voiceSearchBtn.innerHTML = '🎤';
                 }
             }
         });
-        console.log("DEBUG: Event listener añadido al botón voiceSearchBtn.");
 
         recognition.onstart = () => {
-            console.log("DEBUG: recognition.onstart - El reconocimiento de voz ha comenzado.");
             if(voiceSearchBtn) {
                 voiceSearchBtn.disabled = true;
                 voiceSearchBtn.innerHTML = '🎙️';
             }
-            if (voiceSearchStatus) voiceSearchStatus.textContent = 'Escuchando...';
+            voiceSearchStatus.textContent = 'Escuchando...';
         };
 
-        recognition.onresult = (event) => { // <<--- INICIO DE ONRESULT
-            console.log("DEBUG: recognition.onresult - Resultado obtenido.");
+        recognition.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
-            console.log("DEBUG: Texto transcrito:", transcript);
-            if(searchInput) searchInput.value = transcript;
-            else console.error("DEBUG: searchInput es null, no se puede poner el transcript.")
-
-            if (voiceSearchStatus) voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
-
-            // Enviar el formulario automáticamente
-            if (searchInput && searchInput.form) {
-                console.log("DEBUG: Enviando formulario automáticamente...");
+            searchInput.value = transcript;
+            voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
+            if (searchInput.form) {
                 searchInput.form.submit();
-            } else {
-                console.error("DEBUG: No se puede enviar el formulario automáticamente, searchInput o searchInput.form no encontrados.");
             }
-        }; // <<--- FIN DE ONRESULT. Los siguientes deben estar fuera.
+        };
 
-        recognition.onerror = (event) => { // <<--- ONERROR AHORA ESTÁ EN EL NIVEL CORRECTO
-            console.error('DEBUG: recognition.onerror - Error en el reconocimiento de voz:', event.error);
+        recognition.onerror = (event) => {
+            console.error('Error en el reconocimiento de voz:', event.error);
             let errorMessage = 'Ocurrió un error con la búsqueda por voz.';
             if (event.error === 'no-speech') { errorMessage = 'No se detectó voz. Inténtalo de nuevo.'; }
             else if (event.error === 'audio-capture') { errorMessage = 'Problema al capturar audio. Verifica el micrófono.'; }
             else if (event.error === 'not-allowed') { errorMessage = 'Permiso de micrófono denegado. Habilítalo en tu navegador.'; }
             else if (event.error === 'network') { errorMessage = 'Error de red para el reconocimiento de voz.';}
-
-            if (voiceSearchStatus) voiceSearchStatus.textContent = errorMessage;
-            else console.log("DEBUG: voiceSearchStatus es null, no se puede mostrar mensaje de error:", errorMessage);
-            
-            // Asegurarse de que el botón se reactive si hay un error que no sea 'no-speech' que a veces no llama a onend.
+            voiceSearchStatus.textContent = errorMessage;
             if(voiceSearchBtn) {
                 voiceSearchBtn.disabled = false;
                 voiceSearchBtn.innerHTML = '🎤';
             }
         };
 
-        recognition.onend = () => { // <<--- ONEND AHORA ESTÁ EN EL NIVEL CORRECTO
-            console.log("DEBUG: recognition.onend - El reconocimiento de voz ha finalizado.");
+        recognition.onend = () => {
             if(voiceSearchBtn) {
                 voiceSearchBtn.disabled = false;
                 voiceSearchBtn.innerHTML = '🎤';
             }
         };
-
     } else {
-        console.warn('DEBUG: Web Speech API no es compatible con este navegador.');
+        console.warn('Web Speech API no es compatible con este navegador.');
         if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
         if (voiceSearchStatus) {
             voiceSearchStatus.textContent = 'La búsqueda por voz no es compatible con tu navegador.';

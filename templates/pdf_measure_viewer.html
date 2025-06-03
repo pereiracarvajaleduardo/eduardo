@@ -1,0 +1,164 @@
+{% extends "base.html" %} {# Utiliza tu plantilla base para consistencia #}
+
+{% block title %}{{ page_title | default('Herramienta de Medición PDF') }}{% endblock %}
+
+{% block content %}
+{# Aquí va el contenido HTML de la herramienta de medición.
+   Asegúrate de que los IDs de los elementos coincidan con los que usa tu script.js avanzado.
+   Esta es la estructura que discutimos, con todos los botones y spans. #}
+
+<h1>{{ page_title | default('Visor de PDF con Herramientas de Medición') }}</h1>
+
+<div class="controls-container card mb-3">
+    <div class="card-body">
+        <div id="pdf-load-section">
+            <h2 class="card-title">Cargar PDF (Local)</h2>
+            <div class="mb-3">
+                <input type="file" class="form-control" id="pdf-file-input" accept=".pdf">
+            </div>
+            <hr>
+        </div>
+
+        <h2 class="card-title">Herramientas</h2>
+        <div class="btn-toolbar mb-2" role="toolbar" aria-label="Toolbar de herramientas de medición">
+            <div class="btn-group me-2" role="group" aria-label="Herramientas de medición">
+                <button type="button" class="btn btn-primary" id="measure-distance-btn">Medir Distancia</button>
+                <button type="button" class="btn btn-primary" id="measure-area-btn">Medir Área</button>
+                <button type="button" class="btn btn-primary" id="measure-circle-btn">Medir Círculo</button>
+            </div>
+            <div class="btn-group me-2" role="group" aria-label="Finalizar forma">
+                 <button type="button" class="btn btn-success" id="finish-shape-btn" style="display:none;">Finalizar Forma</button>
+            </div>
+        </div>
+        <p><span id="measure-status" aria-live="polite"></span></p>
+        <hr>
+
+        <h2 class="card-title">Controles del PDF</h2>
+        <div class="btn-toolbar mb-2" role="toolbar" aria-label="Toolbar de controles de PDF">
+            <div class="btn-group me-2" role="group" aria-label="Zoom">
+                <button type="button" class="btn btn-secondary" id="zoom-out-btn" title="Alejar">-</button>
+                <button type="button" class="btn btn-secondary" id="zoom-in-btn" title="Acercar">+</button>
+            </div>
+            <span id="zoom-level-info" class="align-self-center" aria-live="polite">Escala PDF: 150%</span>
+        </div>
+        <p class="mb-1">Coordenadas del Clic (Pantalla): <span id="screen-coords" aria-live="polite">-</span></p>
+        <p>Coordenadas del Clic (PDF): <span id="pdf-coords" aria-live="polite">-</span></p>
+    </div>
+</div>
+
+<div class="calibration-container card mb-3">
+    <div class="card-body">
+        <h2 class="card-title">Calibración de Escala</h2>
+        <p><b>Escala Actual Aplicada:</b> <span id="current-scale-info" aria-live="polite">No calibrada</span></p>
+        <hr>
+        <div class="calibration-method mb-3">
+            <h3>Método 1: Calibración Visual</h3>
+            <button type="button" class="btn btn-info" id="start-calibrate-btn">Iniciar/Reiniciar Calibración Visual</button>
+            <p class="mt-2">Estado: <span id="calibration-status" aria-live="polite">Esperando inicio...</span></p>
+            <div id="calibration-input-div" style="display:none;" class="mt-2 p-3 border rounded bg-light">
+                <div class="mb-2">
+                    <label for="known-length" class="form-label">Longitud Real de la Línea Calibrada:</label>
+                    <input type="number" class="form-control" id="known-length" step="any" placeholder="Ej: 5.0">
+                </div>
+                <button type="button" class="btn btn-primary" id="set-scale-btn">Fijar Escala Visual</button>
+            </div>
+        </div>
+        <hr>
+        <div class="calibration-method">
+            <h3>Método 2: Escala Predefinida</h3>
+            <div class="mb-2">
+                <label for="predefined-scale" class="form-label">Seleccionar Escala Dibujo (Ej: 1:100):</label>
+                <select id="predefined-scale" class="form-select">
+                    <option value="">-- Escalas --</option>
+                    <option value="1">1:1 (Tamaño Real)</option>
+                    <option value="10">1:10</option>
+                    <option value="20">1:20</option>
+                    <option value="25">1:25</option>
+                    <option value="50">1:50</option>
+                    <option value="75">1:75</option>
+                    <option value="100">1:100</option>
+                    <option value="125">1:125</option>
+                    <option value="200">1:200</option>
+                    <option value="500">1:500</option>
+                </select>
+            </div>
+            <div class="mb-2">
+                <label for="known-unit" class="form-label">Unidad Real para Todas las Mediciones:</label>
+                <select id="known-unit" class="form-select">
+                    <option value="m">Metros (m)</option>
+                    <option value="cm">Centímetros (cm)</option>
+                    <option value="mm">Milímetros (mm)</option>
+                    <option value="ft">Pies (ft)</option>
+                    <option value="in">Pulgadas (in)</option>
+                </select>
+            </div>
+            <button type="button" class="btn btn-primary" id="apply-predefined-scale-btn">Aplicar Escala Predefinida</button>
+        </div>
+    </div>
+</div>
+
+<div class="canvas-wrapper mb-3">
+    <canvas id="pdf-canvas"></canvas>
+    <canvas id="measure-canvas"></canvas>
+</div>
+
+<div class="measurements-log card">
+    <div class="card-body">
+        <h2 class="card-title">Registro de Mediciones</h2>
+        <ul id="measurements-list" class="list-group mb-2">
+            {# Las mediciones se añadirán aquí por JS #}
+        </ul>
+        <button type="button" class="btn btn-danger" id="clear-measurements-btn">Limpiar Todas las Mediciones</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }} {# Incluye scripts de base.html si los hubiera #}
+
+<script>
+    // Estas variables DEBEN estar disponibles globalmente ANTES de que se ejecute script.js
+    const PDF_URL_TO_LOAD = "{{ pdf_url_to_load | safe if pdf_url_to_load else '' }}";
+    const PDF_WORKER_URL = "{{ pdf_worker_url | safe }}";
+</script>
+
+<script type="module" src="{{ url_for('static', filename='measure_tool/js/script.js') }}"></script>
+
+<style>
+    .file-input-hidden {
+        display: none !important; /* Para ocultar el input de archivo local si se carga por URL */
+    }
+    .canvas-wrapper {
+        position: relative;
+        width: fit-content; /* O un ancho/max-width responsivo */
+        max-width: 100%; /* Para responsividad */
+        margin: 20px auto;
+        border: 1px solid #ccc;
+        overflow: auto; /* Scroll si el canvas es muy grande */
+        background-color: #e9ecef;
+    }
+    #pdf-canvas, #measure-canvas {
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    #pdf-canvas {
+        z-index: 1;
+    }
+    #measure-canvas {
+        z-index: 2; 
+        /* pointer-events es gestionado por JS */
+    }
+    /* Estilos para que los spans de estado no salten tanto */
+    #measure-status, #calibration-status, #current-scale-info, #zoom-level-info, #screen-coords, #pdf-coords {
+        display: inline-block;
+        min-height: 1.5em; /* Altura mínima para evitar saltos de layout */
+        padding: .25rem .5rem;
+        background-color: #f0f0f0;
+        border-radius: .25rem;
+        margin-left: 5px;
+    }
+</style>
+{% endblock %}
