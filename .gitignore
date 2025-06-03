@@ -49,7 +49,6 @@ Desktop.ini
 
 # Archivos de dependencias de construcción de Python
 dist/
-build/
 *.egg-info/
 *.egg
 MANIFEST
