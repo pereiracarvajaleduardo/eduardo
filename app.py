@@ -653,6 +653,7 @@ def delete_pdf(plano_id):
 # ===========================================================
 # NUEVA RUTA PARA LA HERRAMIENTA DE MEDICIÓN DE PDF
 # ===========================================================
+
 @app.route('/medidor/plano/<path:object_key>')
 @login_required # Decide si esta herramienta requiere que el usuario esté logueado
 def visor_medidor_pdf(object_key):

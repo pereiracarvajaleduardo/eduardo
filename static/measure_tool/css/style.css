@@ -281,3 +281,68 @@ label { /* NUEVO: Margen para las etiquetas */
         font-size: 0.95em; /* Ligeramente más pequeño si es necesario, pero priorizar legibilidad */
     }
 }
+
+    /* --- PRUEBA DE CSS AGRESIVA --- */
+/* Asegúrate que el contenedor del layout principal tenga dimensiones */
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden; /* Evitar scrolls inesperados en body durante la prueba */
+}
+
+.pdf-tool-layout-container {
+    display: flex;
+    width: 100%;
+    height: 100%; /* Que ocupe toda la ventana */
+    padding: 10px; /* Un poco de espacio */
+    box-sizing: border-box;
+}
+
+.pdf-viewer-area {
+    flex-grow: 1; /* Que tome el espacio disponible */
+    border: 2px solid red; /* Borde para ver sus límites */
+    position: relative; /* Para que .canvas-wrapper se posicione bien */
+    /* overflow: hidden; /* Para ver si el wrapper se desborda */
+}
+
+.controls-sidebar {
+    width: 300px; /* Mantén el sidebar con un ancho fijo */
+    flex-shrink: 0;
+    border: 2px solid blue;
+    overflow-y: auto;
+    height: calc(100% - 4px); /* Ajustar a la altura del contenedor padre menos bordes */
+}
+
+.canvas-wrapper {
+    position: absolute; /* Posicionar absolutamente DENTRO de .pdf-viewer-area */
+    top: 0;
+    left: 0;
+    width: 100%;  /* 100% del .pdf-viewer-area */
+    height: 100%; /* 100% del .pdf-viewer-area */
+    border: 2px solid green !important; /* Borde para ver sus límites */
+    overflow: auto !important; /* Permitir scroll DENTRO del wrapper */
+    background-color: #f0f0f0; /* Fondo para el wrapper */
+}
+
+#pdf-canvas,
+#measure-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Los atributos width y height son puestos por JS.
+       NO definas width/height aquí en CSS, deben tomar el tamaño de sus atributos.
+       Si el navegador los está encogiendo, es por OTRA regla CSS o por el contenedor.
+    */
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+#pdf-canvas {
+    z-index: 1;
+    background-color: white !important; /* Fondo para ver el área del canvas */
+}
+#measure-canvas {
+    z-index: 2;
+}
+/* --- FIN DE PRUEBA DE CSS AGRESIVA --- */
