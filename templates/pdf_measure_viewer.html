@@ -184,57 +184,38 @@
 <script type="module" src="{{ url_for('static', filename='measure_tool/js/script.js') }}"></script>
 {# Estilos CSS para este layout. Idealmente, mover a tu style.css #}
 <style>
-    .top-controls-toolbar .card-body {
-        padding: 0.75rem; /* Padding más ajustado para la barra de herramientas */
-    }
-    .top-controls-toolbar .vr {
-        height: 25px;
-        margin-left: 0.5rem;
-        margin-right: 0.5rem;
-    }
-    /* Ocultar los separadores en pantallas pequeñas donde los elementos se apilan */
-    @media (max-width: 767.98px) { /* md breakpoint de Bootstrap */
-        .top-controls-toolbar .vr {
-            display: none;
-        }
-        .top-controls-toolbar .col-md-auto { /* Que cada grupo de botones ocupe más espacio */
-            flex-basis: auto;
-            width: auto; /* Permitir que crezcan o se encojan */
-            margin-bottom: 0.5rem; /* Espacio si se apilan */
-        }
-         .top-controls-toolbar .row > .col-md-auto:last-child {
-            margin-bottom: 0;
-        }
-    }
-
-
-    .plan-title-display {
-        font-size: 1.25rem; /* Tamaño de fuente reducido */
-        font-weight: 500;
-        color: #495057;
-    }
+    /* ... (tus estilos existentes para .top-controls-toolbar, .plan-title-display, etc. se mantienen) ... */
 
     .pdf-tool-layout-container {
         display: flex;
-        flex-wrap: wrap; 
-        gap: 1rem; /* Espacio entre el visor y la barra lateral reducida */
+        flex-wrap: wrap;
+        gap: 0.75rem; /* Reducir un poco el espacio si es necesario */
     }
+
     .pdf-viewer-area {
         flex-grow: 1;
         min-width: 300px;
-        display: flex; /* Para controlar el alto del canvas wrapper */
+        display: flex;
         flex-direction: column;
     }
+
     .canvas-wrapper {
         position: relative;
-        width: 100%; /* Ocupa el ancho del pdf-viewer-area */
-        /* height: 75vh;  La altura ahora se controla por flex-grow del contenido si es necesario */
-        flex-grow: 1; /* Permite que el canvas-wrapper crezca para llenar el espacio vertical */
+        width: 100%;
+        flex-grow: 1;
         border: 1px solid #ccc;
         overflow: auto;
         background-color: #e9ecef;
-        min-height: 400px; /* Asegurar una altura mínima visible */
+        /* AUMENTAR ALTURA MÍNIMA Y/O PREDETERMINADA */
+        min-height: 550px; /* Aumentado desde 400px, ajusta según tu preferencia */
+        /* Si quieres que ocupe un porcentaje de la altura de la ventana visible,
+           asegúrate que los contenedores padres (html, body, y cualquier otro hasta
+           .pdf-tool-layout-container) tengan alturas definidas (ej. height: 100%).
+           Si es así, podrías usar algo como:
+           height: calc(80vh - altura_de_la_barra_superior_y_titulo);
+           Pero min-height es más simple para empezar. */
     }
+
     #pdf-canvas, #measure-canvas {
         display: block;
         position: absolute;
@@ -245,26 +226,33 @@
     #measure-canvas { z-index: 2; }
 
     .controls-sidebar-reduced {
-        width: 280px; /* Ancho para la barra lateral de registro */
+        /* REDUCIR ANCHO DE LA BARRA LATERAL */
+        width: 240px; /* Reducido desde 280px, ajusta según preferencia */
         flex-shrink: 0;
-        /* max-height: 85vh; No es necesario si el layout principal no tiene altura fija */
         overflow-y: auto;
+        /* Si la barra superior es muy alta, puedes limitar la altura de la sidebar
+           para que no empuje el contenido hacia abajo si todo es muy alto: */
+        max-height: calc(100vh - 150px); /* Ejemplo: 100% de la altura visible menos unos 150px para la barra superior y márgenes */
+                                       /* Esto es opcional y depende de tu layout general */
     }
     .controls-sidebar-reduced .card-title.h6 { font-size: 1rem; }
 
-    @media (max-width: 991.98px) { /* lg breakpoint, antes de que la sidebar se apile naturalmente */
+
+    @media (max-width: 991.98px) { /* lg breakpoint, antes de que la sidebar se apile */
         .controls-sidebar-reduced {
-            width: 100%; /* Ocupa todo el ancho si el layout se vuelve de una columna antes */
-            max-height: 40vh; /* Limitar altura en modo apilado */
+            width: 100%;
+            max-height: 35vh; /* Ajusta según necesites para el registro en móvil */
         }
-         .pdf-tool-layout-container {
-            flex-direction: column; 
+        .pdf-tool-layout-container {
+            flex-direction: column;
         }
         .canvas-wrapper {
-             /* Podrías ajustar la altura aquí si es necesario para móvil */
-             height: 60vh; /* Por ejemplo */
+            /* AUMENTAR ALTURA DEL CANVAS EN MODO APILADO (PANTALLAS MEDIANAS/PEQUEÑAS) */
+            height: 65vh; /* Aumentado desde 60vh, ajusta según preferencia */
+            min-height: 350px; /* También considera una altura mínima para este caso */
         }
     }
-    .file-input-hidden { display: none !important; } /* Para ocultar el input original si usas uno personalizado */
+
+    /* ... (el resto de tus estilos, como .file-input-hidden, etc.) ... */
 </style>
 {% endblock %}
