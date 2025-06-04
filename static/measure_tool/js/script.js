@@ -109,6 +109,7 @@ function renderPage(num) {
 
     pdfDoc.getPage(num).then(function(page) {
         currentViewport = page.getViewport({ scale: currentRenderScale });
+        console.log('Viewport creado. Ancho:', currentViewport.width, 'Alto:', currentViewport.height);
         if (canvas) {
             canvas.height = currentViewport.height;
             canvas.width = currentViewport.width;

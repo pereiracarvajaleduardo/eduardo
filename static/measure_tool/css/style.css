@@ -1,4 +1,4 @@
-/* Estilos generales del cuerpo y fuentes base */
+ /* Estilos generales del cuerpo y fuentes base */
 body {
     font-family: Arial, sans-serif;
     margin: 0;
@@ -110,8 +110,23 @@ label { /* NUEVO: Margen para las etiquetas */
 }
 
 #pdf-canvas {
+    /* Tus estilos existentes como position: absolute, z-index: 1, etc. */
     display: block;
-    /* El JS establece el tamaño. Si el PDF es grande, .canvas-wrapper con overflow:auto lo manejará */
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+
+    /* Intenta esto para forzar que el estilo CSS tome el tamaño de los atributos HTML: */
+    /* Esto es experimental y el soporte puede variar */
+    /* width: attr(width px); */
+    /* height: attr(height px); */
+
+    /* O, si sabes las dimensiones que JS está estableciendo,
+       y SOLO PARA PRUEBAS, podrías ponerlas aquí con !important: */
+    /* width: 892px !important; */
+    /* height: 1262px !important; */
+    /* background-color: yellow !important; /* Para ver si el área aparece */
 }
 
 #measure-canvas {
