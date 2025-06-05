@@ -7,16 +7,20 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { padding-top: 20px; background-color: #f8f9fa; }
-        .container { max-width: 960px; } /* Ajustado para un contenedor más estándar, puedes cambiarlo */
+        .container { max-width: 960px; } 
         .navbar { margin-bottom: 20px; }
         .alert { margin-top:15px;}
-        .navbar-nav .nav-link.btn { margin-left: 5px; } /* Pequeño ajuste para botones en navbar */
+        .navbar-nav .nav-link.btn { margin-left: 5px; } 
     </style>
 </head>
 <body>
     <div class="container">
         <nav class="navbar navbar-expand-lg navbar-light bg-light rounded mb-4 shadow-sm">
-            <div class="container-fluid"> <a class="navbar-brand" href="{{ url_for('index') }}">Digital Plans</a> <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation"> <span class="navbar-toggler-icon"></span> </button>
+            <div class="container-fluid">
+                <a class="navbar-brand" href="{{ url_for('index') }}">Digital Plans</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                         <li class="nav-item">
@@ -30,8 +34,14 @@
                             <li class="nav-item">
                                 <a class="nav-link" href="{{ url_for('upload_pdf') }}">Subir PDF</a>
                             </li>
-                            {% endif %}
-                        {% endif %}
+                            {% endif %} {# Cierre del if para roles 'admin' o 'cargador' #}
+                            
+                            {% if current_user.role == 'admin' %} {# Condición específica para admin, ya está implícito que está autenticado #}
+                            <li class="nav-item">
+                                <a class="nav-link" href="{{ url_for('manage_users') }}">Gestionar Usuarios</a>
+                            </li>  
+                            {% endif %} {# Cierre del if para rol 'admin' #}
+                        {% endif %} {# Cierre del if current_user.is_authenticated #}
                     </ul>
                     <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
                         {% if current_user.is_authenticated %}
