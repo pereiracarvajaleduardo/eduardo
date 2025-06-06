@@ -35,6 +35,7 @@ flask-ngrok==0.0.25
 Flask-SQLAlchemy==3.1.1
 frozenlist==1.6.0
 fsspec==2025.3.2
+gunicorn
 greenlet==3.2.1
 griffe==1.7.3
 h11==0.16.0
