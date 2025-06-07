@@ -1,23 +1,22 @@
-{# Este es TU ARCHIVO templates/list_pdfs.html con la MODIFICACIÓN #}
 {% extends "base.html" %}
 
-{% block title %}Lista de Planos PDF{% endblock %}
+{% block title %}Lista de Archivos{% endblock %}
 
 {% block content %}
 <div class="card mb-4">
-    <div class="card-header">Buscar Planos</div>
+    <div class="card-header">Buscar Archivos</div>
     <div class="card-body">
         <form method="GET" action="{{ url_for('list_pdfs') }}">
             <div class="row g-2 mb-3 align-items-center">
                 <div class="col-md-3">
-                    <input type="text" class="form-control form-control-sm" name="q_codigo" placeholder="Buscar por Código del Plano..." value="{{ request.args.get('q_codigo', '') }}">
+                    <input type="text" class="form-control form-control-sm" name="q_codigo" placeholder="Buscar por Código..." value="{{ request.args.get('q_codigo', '') }}">
                 </div>
                 <div class="col-md-3">
                     <input type="text" class="form-control form-control-sm" name="q_area" placeholder="Buscar por Área..." value="{{ request.args.get('q_area', '') }}">
                 </div>
                 <div class="col-md-4">
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control form-control-sm" id="q_contenido" name="q_contenido" placeholder="Buscar en Contenido PDF..." value="{{ request.args.get('q_contenido', '') }}">
+                        <input type="text" class="form-control form-control-sm" id="q_contenido" name="q_contenido" placeholder="Buscar en Contenido..." value="{{ request.args.get('q_contenido', '') }}">
                         <button class="btn btn-outline-secondary" type="button" id="voiceSearchBtn" title="Buscar por voz">🎤</button>
                     </div>
                 </div>
@@ -26,13 +25,13 @@
                 </div>
             </div>
         </form>
-        <p id="voiceSearchStatus" aria-live="polite" class="mt-2 mb-0"></p>
+        <p id="voiceSearchStatus" aria-live="polite" class="mt-2 mb-0 small text-muted"></p>
     </div>
 </div>
 
 <div class="card">
     <div class="card-header">
-        <h2>Planos PDF Registrados</h2>
+        <h2>Archivos Registrados</h2>
     </div>
     <div class="card-body">
         {% if planos %}
@@ -40,41 +39,47 @@
                 <table class="table table-striped table-hover table-sm">
                     <thead>
                         <tr>
-                            <th>Código del Plano</th>
+                            <th scope="col" style="min-width: 250px;">Código del Plano</th>
                             <th>Revisión</th>
                             <th>Área</th>
-                            <th>Archivo Original</th>
+                            <th scope="col" style="min-width: 250px;">Archivo Original</th>
                             <th>Fecha Subida</th>
                             <th>Descripción</th>
-                            <th>Acción</th>
+                            <th class="text-center">Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for plano_item in planos %}
                         <tr>
-                            <td>{{ plano_item.codigo_plano }}</td>
+                            <td style="min-width: 250px; word-break: break-all;">{{ plano_item.codigo_plano }}</td>
                             <td>{{ plano_item.revision }}</td>
                             <td>{{ plano_item.area }}</td>
-                            <td>{{ plano_item.nombre_archivo_original }}</td>
+                            <td style="min-width: 250px; word-break: break-all;">{{ plano_item.nombre_archivo_original }}</td>
                             <td>{{ plano_item.fecha_subida.strftime('%Y-%m-%d %H:%M') if plano_item.fecha_subida else 'N/A' }}</td>
                             <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>
-                            <td>
-                                <div class="d-grid gap-1"> 
-                                    <a href="{{ url_for('view_file', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-outline-primary" target="_blank">Ver/Descargar</a>
+                            
+                            <td class="text-center">
+                                <div class="dropdown">
+                                    <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                        Acciones
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="{{ url_for('view_file', object_key=plano_item.r2_object_key) }}" target="_blank">Ver/Descargar</a></li>
+                                        
+                                        {% if plano_item.nombre_archivo_original.lower().endswith('.pdf') %}
+                                            <li><a class="dropdown-item" href="{{ url_for('visor_medidor_pdf', object_key=plano_item.r2_object_key) }}">Medir Plano</a></li>
+                                        {% endif %}
 
-                                    {# ### ESTE ES EL ENLACE QUE DEBES AÑADIR O ASEGURARTE QUE ESTÉ ASÍ ### #}
-                                    {% if plano_item.r2_object_key %}
-                                       <a href="{{ url_for('visor_medidor_pdf', object_key=plano_item.r2_object_key) }}" class="btn btn-sm btn-success">Medir Plano</a>
-                                    {% endif %}
-                                    {# ### FIN DEL ENLACE AÑADIDO/MODIFICADO ### #}
-
-                                    {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
-                                    <a href="{{ url_for('edit_plano', plano_id=plano_item.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
-                                    <form action="{{ url_for('delete_file', plano_id=plano_item.id) }}" method="POST" style="display: block;"
-                                          onsubmit="return confirm('¿Estás seguro de que quieres eliminar este plano? Esta acción no se puede deshacer.');">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger w-100">Eliminar</button>
-                                    </form>
-                                    {% endif %}
+                                        {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item" href="{{ url_for('edit_plano', plano_id=plano_item.id) }}">Editar</a></li>
+                                            <li>
+                                                <form action="{{ url_for('delete_file', plano_id=plano_item.id) }}" method="POST" class="d-inline" onsubmit="return confirm('¿Estás seguro de que quieres eliminar este archivo? Esta acción no se puede deshacer.');">
+                                                    <button type="submit" class="dropdown-item text-danger">Eliminar</button>
+                                                </form>
+                                            </li>
+                                        {% endif %}
+                                    </ul>
                                 </div>
                             </td>
                         </tr>
@@ -83,98 +88,92 @@
                 </table>
             </div>
         {% else %}
-            <p class="text-center">No se encontraron planos con los criterios actuales o no hay planos registrados.</p>
+            <p class="text-center">No se encontraron archivos con los criterios actuales o no hay archivos registrados.</p>
         {% endif %}
-
-        <div class="mt-3">
-            {% if current_user.is_authenticated and current_user.role in ['admin', 'cargador'] %}
-             <a href="{{ url_for('upload_pdf') }}" class="btn btn-primary">Subir Nuevo PDF</a>
-            {% endif %}
-        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-{{ super() }}
 {# Tu script existente para la búsqueda por voz se mantiene igual #}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    // ... (Tu código JavaScript para la búsqueda por voz no necesita cambios)
     const voiceSearchBtn = document.getElementById('voiceSearchBtn');
-    const searchInput = document.getElementById('q_contenido');
-    const voiceSearchStatus = document.getElementById('voiceSearchStatus');
+    const searchInput = document.getElementById('q_contenido');
+    const voiceSearchStatus = document.getElementById('voiceSearchStatus');
 
-    if (!voiceSearchBtn || !searchInput || !voiceSearchStatus) {
-        console.warn("Algunos elementos para la búsqueda por voz no fueron encontrados.");
-        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
-        return; 
-    }
+    if (!voiceSearchBtn || !searchInput || !voiceSearchStatus) {
+        console.warn("Algunos elementos para la búsqueda por voz no fueron encontrados.");
+        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
+        return; 
+    }
 
-    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.lang = navigator.language || 'es-CL';
-        recognition.continuous = false;
-        recognition.interimResults = false;
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = navigator.language || 'es-CL';
+        recognition.continuous = false;
+        recognition.interimResults = false;
 
-        voiceSearchBtn.addEventListener('click', () => {
-            try {
-                voiceSearchStatus.textContent = 'Intentando iniciar reconocimiento...';
-                recognition.start();
-            } catch(e) {
-                console.error("Error al intentar recognition.start():", e);
-                voiceSearchStatus.textContent = 'Error al iniciar. Revise la consola (F12).';
-                if(voiceSearchBtn) {
-                    voiceSearchBtn.disabled = false;
-                    voiceSearchBtn.innerHTML = '🎤';
-                }
-            }
-        });
+        voiceSearchBtn.addEventListener('click', () => {
+            try {
+                voiceSearchStatus.textContent = 'Intentando iniciar reconocimiento...';
+                recognition.start();
+            } catch(e) {
+                console.error("Error al intentar recognition.start():", e);
+                voiceSearchStatus.textContent = 'Error al iniciar. Revise la consola (F12).';
+                if(voiceSearchBtn) {
+                    voiceSearchBtn.disabled = false;
+                    voiceSearchBtn.innerHTML = '🎤';
+                }
+            }
+        });
 
-        recognition.onstart = () => {
-            if(voiceSearchBtn) {
-                voiceSearchBtn.disabled = true;
-                voiceSearchBtn.innerHTML = '🎙️';
-            }
-            voiceSearchStatus.textContent = 'Escuchando...';
-        };
+        recognition.onstart = () => {
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = true;
+                voiceSearchBtn.innerHTML = '🎙️';
+            }
+            voiceSearchStatus.textContent = 'Escuchando...';
+        };
 
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            searchInput.value = transcript;
-            voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
-            if (searchInput.form) {
-                searchInput.form.submit();
-            }
-        };
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            searchInput.value = transcript;
+            voiceSearchStatus.textContent = `Texto reconocido: "${transcript}"`;
+            if (searchInput.form) {
+                searchInput.form.submit();
+            }
+        };
 
-        recognition.onerror = (event) => {
-            console.error('Error en el reconocimiento de voz:', event.error);
-            let errorMessage = 'Ocurrió un error con la búsqueda por voz.';
-            if (event.error === 'no-speech') { errorMessage = 'No se detectó voz. Inténtalo de nuevo.'; }
-            else if (event.error === 'audio-capture') { errorMessage = 'Problema al capturar audio. Verifica el micrófono.'; }
-            else if (event.error === 'not-allowed') { errorMessage = 'Permiso de micrófono denegado. Habilítalo en tu navegador.'; }
-            else if (event.error === 'network') { errorMessage = 'Error de red para el reconocimiento de voz.';}
-            voiceSearchStatus.textContent = errorMessage;
-            if(voiceSearchBtn) {
-                voiceSearchBtn.disabled = false;
-                voiceSearchBtn.innerHTML = '🎤';
-            }
-        };
+        recognition.onerror = (event) => {
+            console.error('Error en el reconocimiento de voz:', event.error);
+            let errorMessage = 'Ocurrió un error con la búsqueda por voz.';
+            if (event.error === 'no-speech') { errorMessage = 'No se detectó voz. Inténtalo de nuevo.'; }
+            else if (event.error === 'audio-capture') { errorMessage = 'Problema al capturar audio. Verifica el micrófono.'; }
+            else if (event.error === 'not-allowed') { errorMessage = 'Permiso de micrófono denegado. Habilítalo en tu navegador.'; }
+            else if (event.error === 'network') { errorMessage = 'Error de red para el reconocimiento de voz.';}
+            voiceSearchStatus.textContent = errorMessage;
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = false;
+                voiceSearchBtn.innerHTML = '🎤';
+            }
+        };
 
-        recognition.onend = () => {
-            if(voiceSearchBtn) {
-                voiceSearchBtn.disabled = false;
-                voiceSearchBtn.innerHTML = '🎤';
-            }
-        };
-    } else {
-        console.warn('Web Speech API no es compatible con este navegador.');
-        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
-        if (voiceSearchStatus) {
-            voiceSearchStatus.textContent = 'La búsqueda por voz no es compatible con tu navegador.';
-        }
-    }
+        recognition.onend = () => {
+            if(voiceSearchBtn) {
+                voiceSearchBtn.disabled = false;
+                voiceSearchBtn.innerHTML = '🎤';
+            }
+        };
+    } else {
+        console.warn('Web Speech API no es compatible con este navegador.');
+        if (voiceSearchBtn) voiceSearchBtn.style.display = 'none';
+        if (voiceSearchStatus) {
+            voiceSearchStatus.textContent = 'La búsqueda por voz no es compatible con tu navegador.';
+        }
+    }
 });
 </script>
 {% endblock %}
