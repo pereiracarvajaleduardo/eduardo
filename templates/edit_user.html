@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Editar Usuario: {{ user_to_edit.username }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h2>Editando a: <strong>{{ user_to_edit.username }}</strong></h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Nombre de Usuario</label>
+                            <input type="text" class="form-control" value="{{ user_to_edit.username }}" readonly disabled>
+                            <div class="form-text">El nombre de usuario no se puede cambiar.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Nueva Contraseña</label>
+                            <input type="password" class="form-control" id="password" name="password" placeholder="Dejar en blanco para no cambiar">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="role" class="form-label">Rol</label>
+                            <select class="form-select" id="role" name="role" required>
+                                {% for r in assignable_roles %}
+                                    <option value="{{ r }}" {% if r == user_to_edit.role %}selected{% endif %}>
+                                        {{ r|capitalize }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <hr>
+                        <h5 class="mt-4">Editar Permisos de Área</h5>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="areas" class="form-label"><strong>Asignar Áreas Existentes</strong></label>
+                                <p class="form-text text-muted small mt-0 mb-1">Usa <strong>Ctrl+Clic</strong> para seleccionar.</p>
+                                <select multiple class="form-select" id="areas" name="areas" size="5">
+                                    {% for area in all_areas %}
+                                        <option value="{{ area }}" {% if area in user_to_edit.allowed_areas %}selected{% endif %}>
+                                            {{ area }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="new_areas" class="form-label"><strong>Añadir Áreas Nuevas</strong></label>
+                                <p class="form-text text-muted small mt-0 mb-1">Escribe áreas nuevas, separadas por coma.</p>
+                                <textarea class="form-control" id="new_areas" name="new_areas" rows="5"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 text-end">
+                            <a href="{{ url_for('manage_users') }}" class="btn btn-secondary me-2">Cancelar</a>
+                            <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

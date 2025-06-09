@@ -1024,6 +1024,67 @@ def manage_users():
                            current_username_creating=form_username if error_in_form else '',
                            current_role_creating=form_role if error_in_form else '')
 
+# AÑADE ESTA FUNCIÓN COMPLETA EN app.py
+
+@app.route('/admin/user/edit/<int:user_id>', methods=['GET', 'POST'])
+@login_required
+def edit_user(user_id):
+    # Solo el admin puede editar usuarios.
+    if current_user.role != 'admin':
+        flash("Acceso no autorizado.", "danger")
+        return redirect(url_for('index'))
+
+    # Buscamos al usuario a editar en la base de datos. Si no existe, error 404.
+    user_to_edit = db.session.get(User, user_id)
+    if not user_to_edit:
+        flash("Usuario no encontrado.", "error")
+        return redirect(url_for('manage_users'))
+        
+    # No se puede editar al propio admin principal para evitar bloqueos
+    if user_to_edit.username == 'admin' and user_to_edit.id == 1:
+        flash("La cuenta principal de administrador no se puede editar desde aquí.", "warning")
+        return redirect(url_for('manage_users'))
+
+    if request.method == 'POST':
+        # --- LÓGICA PARA GUARDAR LOS CAMBIOS ---
+        # Obtenemos los nuevos datos del formulario
+        new_role = request.form.get('role')
+        new_password = request.form.get('password')
+        
+        selected_areas = request.form.getlist('areas')
+        new_areas_str = request.form.get('new_areas', '').strip()
+        new_areas_list = [area.strip() for area in new_areas_str.split(',') if area.strip()]
+        
+        # Combinamos y limpiamos las áreas
+        all_selected_areas = set(selected_areas + new_areas_list)
+        allowed_areas_str = ",".join(sorted(list(all_selected_areas)))
+
+        # Actualizamos los datos del usuario
+        user_to_edit.role = new_role
+        user_to_edit.allowed_areas_str = allowed_areas_str
+        
+        # IMPORTANTE: Solo cambiamos la contraseña si se escribió algo en el campo.
+        if new_password:
+            user_to_edit.set_password(new_password)
+            flash(f"Se han guardado los cambios para '{user_to_edit.username}', incluyendo la nueva contraseña.", "success")
+        else:
+            flash(f"Se han guardado los cambios para '{user_to_edit.username}'. La contraseña no se modificó.", "success")
+
+        db.session.commit()
+        return redirect(url_for('manage_users'))
+
+    # --- LÓGICA PARA MOSTRAR EL FORMULARIO (GET) ---
+    # Obtenemos todas las áreas existentes para mostrarlas en el formulario
+    distinct_areas_tuples = db.session.query(Plano.area).distinct().order_by(Plano.area).all()
+    all_areas = [area[0] for area in distinct_areas_tuples]
+    
+    assignable_roles = ['consultor', 'cargador']
+    
+    return render_template('edit_user.html', 
+                           user_to_edit=user_to_edit, 
+                           all_areas=all_areas,
+                           assignable_roles=assignable_roles)
+
 
 @app.route('/admin/user/delete/<int:user_id>', methods=['POST'])
 @login_required

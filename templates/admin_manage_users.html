@@ -114,7 +114,9 @@
                     </td>
                     <td>
                         {% if user_item.id != current_user.id %}
-                            <form method="POST" action="{{ url_for('delete_user', user_id=user_item.id) }}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de que deseas eliminar al usuario \'{{ user_item.username }}\'? Esta acción no se puede deshacer.');">
+                            <a href="{{ url_for('edit_user', user_id=user_item.id) }}" class="btn btn-sm btn-secondary me-1">Editar</a>
+
+                            <form method="POST" action="{{ url_for('delete_user', user_id=user_item.id) }}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de que deseas eliminar al usuario \'{{ user_item.username }}\'?');">
                                 <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
                             </form>
                         {% else %}
