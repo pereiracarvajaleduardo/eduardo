@@ -1,3 +1,4 @@
+# Copyright (c) 2025 [EDUARDO ANDRES PEREIRA CARVAJAL]. Todos los derechos reservados.
 # === clave de acceso ===
 import os
 import re
@@ -19,6 +20,8 @@ import spacy
 from langdetect import detect as lang_detect_func, LangDetectException
 from deep_translator import GoogleTranslator
 import io
+from datetime import datetime
+
 
 # --- Carga de Entorno y Configuración Inicial ---
 load_dotenv()
@@ -382,9 +385,9 @@ def index():
         flash("ADVERTENCIA: La configuración para R2 no está completa. Algunas funcionalidades pueden estar limitadas.", "danger")
     return render_template('index.html')
 
-@app.route('/upload', methods=['GET', 'POST']) # Considerar renombrar a /upload_file
+@app.route('/upload', methods=['GET', 'POST'])
 @login_required
-def upload_pdf(): # Considerar renombrar a upload_file
+def upload_pdf():
     if current_user.role not in ['admin', 'cargador']:
         flash('No tienes permiso para subir archivos.', 'danger')
         return redirect(url_for('index'))
@@ -392,212 +395,172 @@ def upload_pdf(): # Considerar renombrar a upload_file
         flash("Subida de archivos deshabilitada: Faltan configuraciones de R2.", "danger")
         return redirect(url_for('index'))
 
+    # Para el formulario, el cargador solo puede elegir áreas permitidas.
+    if current_user.role == 'admin':
+        distinct_areas_tuples = db.session.query(Plano.area).distinct().order_by(Plano.area).all()
+        upload_areas = [area[0] for area in distinct_areas_tuples]
+    else:
+        upload_areas = current_user.allowed_areas
+
     if request.method == 'POST':
-        file_obj = request.files.get('file_to_upload') # Nombre genérico del campo de archivo
-        codigo_plano_form = request.form.get('codigo_plano', '').strip()
+        file_obj = request.files.get('file_to_upload')
+                # --- LÓGICA CORREGIDA Y REORDENADA ---
+
+        # 1. PRIMERO, verificar que el archivo existe. Es lo más importante.
+        if not file_obj or not file_obj.filename:
+            flash('No se seleccionó ningún archivo.', 'warning')
+            return redirect(url_for('upload_pdf'))
+
+        # 2. SEGUNDO, ahora que sabemos que hay un archivo, definimos original_filename.
+        original_filename = file_obj.filename
+        
+        # 3. TERCERO, ahora sí podemos usar original_filename para derivar el código del plano.
+        codigo_plano_form = os.path.splitext(original_filename)[0]
+        
+        # (Opcional) Notificar si el usuario había escrito algo diferente en el campo (que ahora ignoramos).
+        codigo_enviado_por_usuario = request.form.get('codigo_plano', '').strip()
+        if codigo_enviado_por_usuario and codigo_enviado_por_usuario != codigo_plano_form:
+            flash("Nota: El 'Código del Plano' se ha establecido automáticamente desde el nombre del archivo para garantizar la consistencia.", "info")
+
+        # 4. AHORA, continuamos obteniendo el resto de las variables del formulario.
         revision_form_original = request.form.get('revision', '').strip()
         area_form = request.form.get('area', '').strip()
         descripcion_form = request.form.get('descripcion', '').strip()
 
+        # Obtenemos la extensión para validarla
+        _filename_root, ext = os.path.splitext(original_filename)
+        ext = ext.lower()
+        
+        # --- FIN DE LA LÓGICA CORREGIDA ---
+        revision_form_original = request.form.get('revision', '').strip()
+        area_form = request.form.get('area', '').strip()
+        descripcion_form = request.form.get('descripcion', '').strip()
+
+        # 1. Validaciones Iniciales
         if not file_obj or not file_obj.filename:
             flash('No se seleccionó ningún archivo.', 'warning')
-            return redirect(request.url)
-
+            return redirect(url_for('upload_pdf'))
+        
         original_filename = file_obj.filename
         _filename_root, ext = os.path.splitext(original_filename)
-        ext = ext.lower() # Usar extensión en minúsculas
+        ext = ext.lower()
 
         if ext not in ALLOWED_EXTENSIONS:
-            flash(f"Formato de archivo no permitido ('{ext}'). Solo se permiten: {', '.join(ALLOWED_EXTENSIONS)}", 'danger')
-            return redirect(request.url)
-
-        # --- LÓGICA DE EXTRACCIÓN Y DECISIÓN DE REVISIÓN ---
+            flash(f"Formato de archivo no permitido ('{ext}').", 'danger')
+            return redirect(url_for('upload_pdf'))
+        
         revision_a_usar = revision_form_original
         revision_extraida_nombre = extraer_revision_del_filename(original_filename)
-
-        if revision_extraida_nombre:
-            if not revision_form_original:
-                app.logger.info(f"Upload: Campo de revisión vacío. Usando revisión '{revision_extraida_nombre}' extraída de '{original_filename}'.")
-                flash(f"Se ha detectado la revisión '{revision_extraida_nombre}' del nombre del archivo y se ha utilizado.", "info")
-                revision_a_usar = revision_extraida_nombre
-            elif revision_form_original.strip().upper() != revision_extraida_nombre:
-                flash(f"Advertencia: La revisión ingresada en el formulario ('{revision_form_original}') es diferente de la detectada en el nombre del archivo ('{revision_extraida_nombre}'). "
-                      f"Se utilizará la revisión del formulario: '{revision_form_original}'.", "warning")
-        # --- FIN LÓGICA DE EXTRACCIÓN Y DECISIÓN DE REVISIÓN ---
-
+        if revision_extraida_nombre and not revision_form_original:
+            revision_a_usar = revision_extraida_nombre
+            flash(f"Revisión '{revision_a_usar}' detectada del nombre del archivo.", "info")
+        elif revision_form_original.strip().upper() != revision_extraida_nombre:
+            flash(f"Advertencia: La revisión del formulario ('{revision_form_original}') difiere de la detectada ('{revision_extraida_nombre}'). Se usará la del formulario.", "warning")
+        
         if not codigo_plano_form or not revision_a_usar:
-            flash('Los campos Código de Plano y Revisión son obligatorios (la revisión puede ser detectada del nombre del archivo si el campo está vacío).', 'warning')
-            return redirect(request.url)
+            flash('Código de Plano y Revisión son obligatorios.', 'warning')
+            return redirect(url_for('upload_pdf'))
 
-        if not re.match(VALID_REVISION_PATTERN, revision_a_usar):
-            origen_rev_invalida = f"valor '{revision_a_usar}'"
-            if not revision_form_original and revision_extraida_nombre and revision_a_usar == revision_extraida_nombre:
-                origen_rev_invalida = f"revisión '{revision_a_usar}' detectada del nombre del archivo"
-            elif revision_form_original and revision_a_usar == revision_form_original:
-                 origen_rev_invalida = f"revisión '{revision_a_usar}' ingresada en el formulario"
-            flash(REVISION_FORMAT_ERROR_MSG + f" (El {origen_rev_invalida} no es válido).", 'danger')
-            app.logger.warning(f"Upload: Formato de revisión inválido: '{revision_a_usar}' para código '{codigo_plano_form}'.")
-            return redirect(request.url)
-
+        # 2. Lógica de Área y Permisos
         area_final_determinada = None
         es_mr = codigo_plano_form.upper().startswith("K484-0000-0000-MR-")
         if es_mr:
             if area_form:
                 area_final_determinada = area_form
-            elif ext == '.pdf': # Solo intentar extraer área si es un PDF
+            elif ext == '.pdf':
                 try:
                     if hasattr(file_obj.stream, 'seek'): file_obj.stream.seek(0)
-                    area_extraida = extraer_area_del_pdf(file_obj.stream) # file_obj.stream es el stream del archivo
-                    if area_extraida:
-                        area_final_determinada = area_extraida
-                        flash(f"Área del plano MR determinada automáticamente como: '{area_extraida}'.", "info")
-                    else:
-                        area_final_determinada = "Area_MR_Pendiente"
-                        flash("No se pudo determinar el área para el plano MR PDF desde su contenido. Se asignó 'Area_MR_Pendiente'.", "warning")
-                except Exception as e_area:
+                    area_extraida = extraer_area_del_pdf(file_obj.stream)
+                    area_final_determinada = area_extraida or "Area_MR_Pendiente"
+                except Exception:
                     area_final_determinada = "Area_MR_Error"
-                    flash(f"Error extrayendo área del plano MR PDF: {e_area}", "warning")
-                    app.logger.error(f"Error al extraer área del PDF para MR: {e_area}")
-            else: # Es MR, no se proveyó área, y NO es PDF
+            else:
                 area_final_determinada = "Area_MR_Pendiente"
-                flash("Para planos MR que no son PDF, el área debe especificarse manualmente o se usará 'Area_MR_Pendiente'.", "info")
-        else: # No es MR
+        else:
             if area_form:
                 area_final_determinada = area_form
             else:
                 flash('El campo "Área" es obligatorio para planos que no son de tipo MR.', 'warning')
-                return redirect(request.url)
+                return redirect(url_for('upload_pdf'))
 
-        if area_final_determinada is None: # Doble chequeo por si alguna lógica falla
-            flash('Error crítico: El área del plano no pudo ser determinada.', 'danger')
-            return redirect(request.url)
+        if current_user.role == 'cargador' and area_final_determinada not in current_user.allowed_areas:
+            flash(f"No tienes permiso para subir archivos al área '{area_final_determinada}'.", 'danger')
+            return redirect(url_for('upload_pdf'))
 
-        original_filename_secure = secure_filename(original_filename)
-        cleaned_area = clean_for_path(area_final_determinada)
-        cleaned_codigo = clean_for_path(codigo_plano_form)
-        cleaned_revision_for_filename = clean_for_path(revision_a_usar)
-        # Usar la extensión original validada (ext) para el nombre en R2
-        r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision_for_filename}{ext}"
-        r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
-
-        s3 = get_s3_client()
-        if not s3:
-            flash("Error en la configuración de R2. No se puede subir el archivo.", "danger")
-            return redirect(request.url)
-
+        # 3. Lógica Principal (Verificación y Guardado)
         try:
-            planos_existentes_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_form).all()
-            r2_object_keys_a_eliminar_si_nueva_rev = []
-            db_entries_a_eliminar_si_nueva_rev = []
+            # Verificación de Revisiones
+            planos_existentes = Plano.query.filter_by(codigo_plano=codigo_plano_form).all()
+            r2_keys_a_eliminar = []
+            db_entries_a_eliminar = []
 
-            if not planos_existentes_mismo_codigo:
-                app.logger.info(f"Upload: Creando nuevo plano (primera revisión): {codigo_plano_form} Rev {revision_a_usar}")
-            else:
-                revision_actual_mas_alta_db_str = None
-                plano_con_revision_ingresada = None
-                for p_existente in planos_existentes_mismo_codigo:
-                    if p_existente.revision.strip().upper() == revision_a_usar.strip().upper():
-                        plano_con_revision_ingresada = p_existente
-                    if revision_actual_mas_alta_db_str is None or \
-                       es_revision_mas_nueva(p_existente.revision, revision_actual_mas_alta_db_str):
-                        revision_actual_mas_alta_db_str = p_existente.revision
+            if planos_existentes:
+                rev_mas_alta = None
+                for p in planos_existentes:
+                    if p.revision.strip().upper() == revision_a_usar.strip().upper():
+                        flash(f"Error: La revisión '{revision_a_usar}' ya existe para este plano.", "danger")
+                        return redirect(url_for('upload_pdf'))
+                    if rev_mas_alta is None or es_revision_mas_nueva(p.revision, rev_mas_alta):
+                        rev_mas_alta = p.revision
 
-                if plano_con_revision_ingresada:
-                    flash(f"La revisión '{revision_a_usar}' para el plano '{codigo_plano_form}' ya existe. "
-                          f"Si desea reemplazar el archivo o modificar sus datos, por favor utilice la opción de editar el plano existente.", "danger")
-                    app.logger.warning(f"Upload: Intento de subir plano con revisión existente: {codigo_plano_form} Rev {revision_a_usar}.")
-                    return redirect(request.url)
-
-                if not revision_actual_mas_alta_db_str or \
-                   not es_revision_mas_nueva(revision_a_usar, revision_actual_mas_alta_db_str):
-                    error_msg = f"La revisión '{revision_a_usar}' para el plano '{codigo_plano_form}' no es válida. "
-                    if revision_actual_mas_alta_db_str:
-                        error_msg += f"Debe ser una revisión más nueva que la existente más alta ('{revision_actual_mas_alta_db_str}')."
-                    else:
-                        error_msg += "Debe ser la primera revisión válida o una revisión más nueva que las existentes."
-                    flash(error_msg, "danger")
-                    app.logger.warning(f"Upload: Revisión '{revision_a_usar}' para '{codigo_plano_form}' no sigue secuencia. Más alta DB: '{revision_actual_mas_alta_db_str}'.")
-                    return redirect(request.url)
-
-                app.logger.info(f"Upload: Nueva revisión '{revision_a_usar}' es la más alta para {codigo_plano_form} (anterior más alta: '{revision_actual_mas_alta_db_str}'). Planos antiguos serán eliminados.")
-                for p_antiguo in planos_existentes_mismo_codigo:
+                if not es_revision_mas_nueva(revision_a_usar, rev_mas_alta):
+                    flash(f"Error: La revisión '{revision_a_usar}' no es más nueva que la existente más alta ('{rev_mas_alta}').", "danger")
+                    return redirect(url_for('upload_pdf'))
+                
+                # Si es una nueva revisión válida, preparamos las antiguas para eliminarlas
+                for p_antiguo in planos_existentes:
                     if p_antiguo.r2_object_key:
-                        r2_object_keys_a_eliminar_si_nueva_rev.append(p_antiguo.r2_object_key)
-                    db_entries_a_eliminar_si_nueva_rev.append(p_antiguo)
+                        r2_keys_a_eliminar.append(p_antiguo.r2_object_key)
+                    db_entries_a_eliminar.append(p_antiguo)
+
+            # --- INICIO DEL CÓDIGO DE GUARDADO RESTAURADO ---
+            original_filename_secure = secure_filename(original_filename)
+            cleaned_area = clean_for_path(area_final_determinada)
+            cleaned_codigo = clean_for_path(codigo_plano_form)
+            cleaned_revision = clean_for_path(revision_a_usar)
+            r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision}{ext}"
+            r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
 
             plano_a_crear = Plano(
                 codigo_plano=codigo_plano_form,
                 revision=revision_a_usar,
                 area=area_final_determinada,
-                nombre_archivo_original=original_filename_secure, # Guardar nombre original con extensión
+                nombre_archivo_original=original_filename_secure,
                 r2_object_key=r2_object_key_nuevo,
-                descripcion=descripcion_form,
-                # idioma_documento se establecerá después de la extracción de texto
+                descripcion=descripcion_form
             )
-
-            texto_contenido_archivo, idioma_doc_detectado = "", plano_a_crear.idioma_documento
-            try:
-                if hasattr(file_obj.stream, 'seek'): file_obj.stream.seek(0)
-                # Pasar original_filename para que extraer_texto_del_archivo sepa la extensión
-                texto_contenido_archivo, idioma_doc_detectado = extraer_texto_del_archivo(file_obj.stream, original_filename)
-            except Exception as e_extr_texto:
-                app.logger.error(f"Upload: Fallo al extraer texto/idioma del archivo '{original_filename}': {e_extr_texto}", exc_info=True)
-                # Continuar sin el texto si falla, pero registrarlo. El idioma será el default.
-
-            plano_a_crear.idioma_documento = idioma_doc_detectado
-            plano_a_crear.fecha_subida = datetime.now(timezone.utc)
-
+            
+            texto_contenido, idioma_doc = extraer_texto_del_archivo(file_obj.stream, original_filename)
+            plano_a_crear.idioma_documento = idioma_doc
+            
+            s3 = get_s3_client()
+            if hasattr(file_obj.stream, 'seek'): file_obj.stream.seek(0)
+            s3.upload_fileobj(file_obj.stream, R2_BUCKET_NAME, r2_object_key_nuevo)
+            
             db.session.add(plano_a_crear)
-
-            try:
-                if hasattr(file_obj.stream, 'seek'): file_obj.stream.seek(0)
-                s3.upload_fileobj(file_obj.stream, R2_BUCKET_NAME, r2_object_key_nuevo)
-                app.logger.info(f"Upload: Archivo '{r2_object_key_nuevo}' subido a R2.")
-            except ClientError as e_s3:
-                db.session.rollback()
-                flash(f"Error de conexión al subir el archivo a R2: {e_s3.response.get('Error', {}).get('Message', 'Error R2 desconocido')}", "danger")
-                return redirect(request.url)
-
-            db.session.flush() # Para obtener el ID del plano_a_crear
-            plano_id_actual = plano_a_crear.id
-
-            actualizar_tsvector_plano(
-                plano_id_actual, plano_a_crear.codigo_plano,
-                plano_a_crear.area, plano_a_crear.descripcion,
-                texto_contenido_archivo, # Pasar el texto extraído
-                idioma_doc_detectado
-            )
-
-            # Eliminar archivos antiguos en R2 y entradas de BD
-            for r2_key in set(r2_object_keys_a_eliminar_si_nueva_rev):
-                if r2_key and r2_key != r2_object_key_nuevo: # No eliminar el que acabamos de subir
-                    try:
-                        s3.delete_object(Bucket=R2_BUCKET_NAME, Key=r2_key)
-                        app.logger.info(f"Upload: Objeto R2 antiguo '{r2_key}' eliminado.")
-                    except Exception as e_del_r2:
-                        app.logger.error(f"Upload: Error borrando objeto R2 antiguo '{r2_key}': {e_del_r2}")
-
-            for plano_db_a_borrar in db_entries_a_eliminar_si_nueva_rev:
-                app.logger.info(f"Upload: Eliminando registro de BD para plano ID {plano_db_a_borrar.id} ({plano_db_a_borrar.codigo_plano} Rev {plano_db_a_borrar.revision}).")
-                db.session.delete(plano_db_a_borrar)
-
+            db.session.flush()
+            
+            actualizar_tsvector_plano(plano_a_crear.id, plano_a_crear.codigo_plano, plano_a_crear.area, plano_a_crear.descripcion, texto_contenido, idioma_doc)
+            
+            for key in r2_keys_a_eliminar:
+                if key: s3.delete_object(Bucket=R2_BUCKET_NAME, Key=key)
+            
+            for entry in db_entries_a_eliminar:
+                db.session.delete(entry)
+            
             db.session.commit()
-
-            flash_msg = f"Archivo '{original_filename_secure}' (Plano: {codigo_plano_form} Rev: {revision_a_usar}) subido exitosamente."
-            # Advertir si no se pudo extraer texto de tipos de archivo donde se espera (PDF, TXT, DOCX)
-            if not texto_contenido_archivo and ext in ['.pdf', '.txt', '.docx']:
-                 flash_msg += f" ADVERTENCIA: No se pudo leer el contenido del archivo {ext.upper()} para indexación de búsqueda."
-            flash(flash_msg, "success" if (texto_contenido_archivo or ext not in ['.pdf', '.txt', '.docx']) else "warning")
-
+            flash(f"Archivo '{original_filename_secure}' (Revisión: {revision_a_usar}) subido exitosamente.", "success")
             return redirect(url_for('list_pdfs'))
+            # --- FIN DEL CÓDIGO DE GUARDADO RESTAURADO ---
 
-        except Exception as e_general:
+        except Exception as e:
             db.session.rollback()
-            flash(f"Error general al procesar el archivo: {str(e_general)}", "danger")
-            app.logger.error(f"Upload: Error general: {e_general}", exc_info=True)
-            return redirect(request.url)
+            flash(f"Error general al procesar el archivo: {str(e)}", "danger")
+            app.logger.error(f"Upload: Error general: {e}", exc_info=True)
+            return redirect(url_for('upload_pdf'))
 
-    return render_template('upload_pdf.html') # Considerar renombrar plantilla a upload_file.html
+    # Para la solicitud GET
+    return render_template('upload_pdf.html', upload_areas=upload_areas)
 
 
 @app.route('/plano/edit/<int:plano_id>', methods=['GET', 'POST'])
@@ -769,6 +732,8 @@ def edit_plano(plano_id):
     return render_template('edit_plano.html', plano=plano_a_editar)
 
 
+# REEMPLAZA TU FUNCIÓN list_pdfs COMPLETA CON ESTA VERSIÓN FINAL
+
 @app.route('/pdfs')
 @login_required
 def list_pdfs():
@@ -779,54 +744,79 @@ def list_pdfs():
         query_contenido_original = request.args.get('q_contenido', '').strip()
         query_nombre_archivo = request.args.get('q_nombre_archivo', '').strip()
 
-        # 1. Iniciar la consulta base
+        # 1. Iniciar la consulta base con todos los planos
         base_query = Plano.query
 
-        # 2. APLICAR FILTRO DE PERMISOS (EL PASO MÁS IMPORTANTE)
-        # Si el usuario NO es admin, se restringe la consulta base a solo sus áreas permitidas.
+        # 2. Aplicar el filtro de permisos por área (el más importante)
         if current_user.role != 'admin':
             user_allowed_areas = current_user.allowed_areas
-            
             if not user_allowed_areas:
-                # Si no tiene áreas asignadas, no debe ver nada.
-                return render_template('list_pdfs.html', planos=[], R2_OBJECT_PREFIX=R2_OBJECT_PREFIX, R2_ENDPOINT_URL=R2_ENDPOINT_URL, R2_BUCKET_NAME=R2_BUCKET_NAME)
-            
-            # Se modifica la consulta base para que SOLO incluya los planos de las áreas permitidas.
+                return render_template('list_pdfs.html', planos=[])
             base_query = base_query.filter(Plano.area.in_(user_allowed_areas))
 
-        # 3. A partir de aquí, se trabaja sobre la consulta YA FILTRADA por permisos.
+        # 3. Aplicar los filtros de los campos de texto normales
         final_query = base_query
-
-        # Aplicar filtros de búsqueda adicionales
         if query_codigo:
             final_query = final_query.filter(Plano.codigo_plano.ilike(f'%{query_codigo}%'))
-        
         if query_area:
-            # Un usuario no puede buscar un área a la que no tiene acceso.
             if current_user.role != 'admin' and query_area not in current_user.allowed_areas:
                 final_query = final_query.filter(db.false())
             else:
                 final_query = final_query.filter(Plano.area.ilike(f'%{query_area}%'))
-
         if query_nombre_archivo:
             final_query = final_query.filter(Plano.nombre_archivo_original.ilike(f'%{query_nombre_archivo}%'))
 
-        # Lógica de búsqueda por contenido (FTS)
+        # 4. Aplicar el filtro de Búsqueda por Contenido (FTS) si es necesario
         if query_contenido_original and app.config['SQLALCHEMY_DATABASE_URI'].startswith("postgresql"):
-            # (Toda la lógica de FTS que ya tenías va aquí, aplicada sobre 'final_query')
-            # ... (código FTS) ...
-            pass # Placeholder para tu lógica FTS
+            ids_fts_encontrados = set()
+            
+            # --- Lógica de búsqueda en español ---
+            termino_es = lematizar_texto(query_contenido_original, NLP_ES, 'español')
+            if termino_es.strip():
+                query_es_fts = final_query.filter(
+                    Plano.idioma_documento.in_(['spanish', None]),
+                    Plano.tsvector_contenido.match(termino_es, postgresql_regconfig='spanish')
+                ).with_entities(Plano.id).all()
+                for pid, in query_es_fts: ids_fts_encontrados.add(pid)
 
-        # 4. Ejecutar la consulta final y obtener los resultados
+            # --- Lógica de búsqueda en inglés (con traducción) ---
+            termino_traducido_en = query_contenido_original
+            try:
+                # Solo traducir si no es solo números y es suficientemente largo
+                if len(query_contenido_original) > 2 and not query_contenido_original.isnumeric():
+                     traduccion = GoogleTranslator(source='auto', target='en').translate(query_contenido_original)
+                     if traduccion:
+                        termino_traducido_en = traduccion
+            except Exception as e:
+                app.logger.error(f"Fallo en la API de traducción: {e}")
+
+            termino_en = lematizar_texto(termino_traducido_en, NLP_EN, 'inglés')
+            if termino_en.strip():
+                query_en_fts = final_query.filter(
+                    Plano.idioma_documento == 'english',
+                    Plano.tsvector_contenido.match(termino_en, postgresql_regconfig='english')
+                ).with_entities(Plano.id).all()
+                for pid, in query_en_fts: ids_fts_encontrados.add(pid)
+            
+            # --- Filtrar la consulta final con los resultados del FTS ---
+            if ids_fts_encontrados:
+                final_query = final_query.filter(Plano.id.in_(list(ids_fts_encontrados)))
+            else:
+                # Si el usuario buscó por contenido y no se encontró nada, el resultado debe ser cero
+                final_query = final_query.filter(db.false())
+
+        elif query_contenido_original: # Si no es PostgreSQL, busca solo en la descripción
+            final_query = final_query.filter(Plano.descripcion.ilike(f'%{query_contenido_original}%'))
+
+        # 5. Ejecutar la consulta final y ordenar los resultados
         planos_db = final_query.order_by(Plano.area, Plano.codigo_plano.desc()).all()
 
     except Exception as e:
         flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
-        app.logger.error(f"Error en la ruta /pdfs (list_pdfs): {e}", exc_info=True)
+        app.logger.error(f"Error en la ruta /pdfs: {e}", exc_info=True)
         planos_db = []
     
     return render_template('list_pdfs.html', planos=planos_db, R2_OBJECT_PREFIX=R2_OBJECT_PREFIX, R2_ENDPOINT_URL=R2_ENDPOINT_URL, R2_BUCKET_NAME=R2_BUCKET_NAME)
-
 
 @app.route('/files/view/<path:object_key>') # Renombrada para generalidad
 @login_required
@@ -1007,14 +997,7 @@ def manage_users():
                 error_in_form = True
 
     users = User.query.order_by(User.username).all()
-    
-    return render_template('admin_manage_users.html',
-                           users=users,
-                           assignable_roles=assignable_roles,
-                           distinct_areas=distinct_areas,
-                           current_username_creating=form_username if error_in_form else '',
-                           current_role_creating=form_role if error_in_form else '')
-    
+  
     # --- LÍNEA CORREGIDA ---
     # Ahora pasamos 'distinct_areas' a la plantilla.
     return render_template('admin_manage_users.html',
@@ -1138,20 +1121,12 @@ with app.app_context():
             db.session.rollback()
             app.logger.error(f"Error creando usuario admin por defecto: {e}")
 
-    # Crear usuario consultor por defecto si no existe
-    if not User.query.filter_by(username='usuario').first():
-        try:
-            consultor_user = User(username='usuario', role='consultor')
-            consultor_user.set_password(os.getenv('CONSULTOR_PASSWORD', 'eimisa')) # Cambiar y gestionar de forma segura
-            db.session.add(consultor_user)
-            db.session.commit()
-            app.logger.info("Usuario 'usuario' (consultor) por defecto creado.")
-        except Exception as e:
-            db.session.rollback()
-            app.logger.error(f"Error creando usuario consultor por defecto: {e}")
-
     app.logger.info("Contexto de aplicación inicializado: Base de datos y usuarios por defecto verificados/creados.")
 
+@app.context_processor
+def inject_current_year():
+    """Inyecta el año actual en todas las plantillas."""
+    return {'current_year': datetime.utcnow().year}
 
 if __name__ == '__main__':
     if R2_CONFIG_MISSING:

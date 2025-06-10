@@ -23,59 +23,18 @@
         </div>
         <div class="card-body">
             <form method="POST" action="{{ url_for('manage_users') }}">
-                
                 <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="username" class="form-label">Nombre de Usuario:</label>
-                        <input type="text" class="form-control" id="username" name="username" value="{{ current_username_creating }}" required>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label for="password" class="form-label">Contraseña:</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                    </div>
+                    <div class="col-md-6 mb-3"><label for="username" class="form-label">Nombre de Usuario:</label><input type="text" class="form-control" id="username" name="username" value="{{ current_username_creating }}" required></div>
+                    <div class="col-md-6 mb-3"><label for="password" class="form-label">Contraseña:</label><input type="password" class="form-control" id="password" name="password" required></div>
                 </div>
-
                 <div class="row">
-                    <div class="col-md-12 mb-3">
-                        <label for="role" class="form-label">Rol:</label>
-                        <select class="form-select" id="role" name="role" required>
-                            <option value="">Seleccione un rol...</option>
-                            {% for r in assignable_roles %}
-                            <option value="{{ r }}" {% if r == current_role_creating %}selected{% endif %}>{{ r|capitalize }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                    <div class="col-md-12 mb-3"><label for="role" class="form-label">Rol:</label><select class="form-select" id="role" name="role" required><option value="">Seleccione un rol...</option>{% for r in assignable_roles %}<option value="{{ r }}" {% if r == current_role_creating %}selected{% endif %}>{{ r|capitalize }}</option>{% endfor %}</select></div>
                 </div>
-
                 <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="areas" class="form-label"><strong>Asignar Áreas Existentes</strong></label>
-                        <p class="form-text text-muted small mt-0 mb-1">
-                            Usa <strong>Ctrl+Clic</strong> para seleccionar varias.
-                        </p>
-                        <select multiple class="form-select" id="areas" name="areas" size="5">
-                            {% for area in distinct_areas %}
-                                <option value="{{ area }}">{{ area }}</option>
-                            {% else %}
-                                <option disabled>No hay áreas definidas.</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    
-                    <div class="col-md-6 mb-3">
-                        <label for="new_areas" class="form-label"><strong>Añadir y Asignar Áreas Nuevas</strong></label>
-                        <p class="form-text text-muted small mt-0 mb-1">
-                            Escribe áreas nuevas, separadas por coma.
-                        </p>
-                        <textarea class="form-control" id="new_areas" name="new_areas" rows="5" placeholder="Piping, Mecánica, OOCC, ..."></textarea>
-                    </div>
+                    <div class="col-md-6 mb-3"><label for="areas" class="form-label"><strong>Asignar Áreas Existentes</strong></label><p class="form-text text-muted small mt-0 mb-1">Usa <strong>Ctrl+Clic</strong> para seleccionar varias.</p><select multiple class="form-select" id="areas" name="areas" size="5">{% for area in distinct_areas %}<option value="{{ area }}">{{ area }}</option>{% else %}<option disabled>No hay áreas definidas.</option>{% endfor %}</select></div>
+                    <div class="col-md-6 mb-3"><label for="new_areas" class="form-label"><strong>Añadir y Asignar Áreas Nuevas</strong></label><p class="form-text text-muted small mt-0 mb-1">Escribe áreas nuevas, separadas por coma.</p><textarea class="form-control" id="new_areas" name="new_areas" rows="5" placeholder="Piping, Mecánica, OOCC, ..."></textarea></div>
                 </div>
-
-                <div class="row mt-3">
-                    <div class="col-12 text-end">
-                        <button type="submit" class="btn btn-primary">Crear Usuario</button>
-                    </div>
-                </div>
+                <div class="row mt-3"><div class="col-12 text-end"><button type="submit" class="btn btn-primary">Crear Usuario</button></div></div>
             </form>
         </div>
     </div>
@@ -92,7 +51,7 @@
                     <th>Nombre de Usuario</th>
                     <th>Rol</th>
                     <th>Áreas Permitidas</th>
-                    <th>Acciones</th>
+                    <th class="text-center">Acciones</th>
                 </tr>
             </thead>
             <tbody>
@@ -112,15 +71,14 @@
                             <span class="badge bg-warning text-dark">Ninguna</span>
                         {% endif %}
                     </td>
-                    <td>
-                        {% if user_item.id != current_user.id %}
+                    <td class="text-center">
+                        {% if user_item.username != 'admin' %}
                             <a href="{{ url_for('edit_user', user_id=user_item.id) }}" class="btn btn-sm btn-secondary me-1">Editar</a>
-
                             <form method="POST" action="{{ url_for('delete_user', user_id=user_item.id) }}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de que deseas eliminar al usuario \'{{ user_item.username }}\'?');">
                                 <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
                             </form>
                         {% else %}
-                            <span class="text-muted">(Cuenta actual)</span>
+                            <span class="text-muted small">(No se puede modificar)</span>
                         {% endif %}
                     </td>
                 </tr>

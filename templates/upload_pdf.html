@@ -38,3 +38,33 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Busca el input del archivo y el input del código del plano
+    const fileInput = document.getElementById('file_to_upload');
+    const codigoPlanoInput = document.getElementById('codigo_plano');
+
+    if (fileInput && codigoPlanoInput) {
+        // Añade un 'escuchador' que se activa cuando el usuario selecciona un archivo
+        fileInput.addEventListener('change', function() {
+            // Obtiene el nombre del archivo seleccionado
+            const fullFilename = fileInput.value.split('\\').pop();
+            
+            if (fullFilename) {
+                // Encuentra la posición del último punto para quitar la extensión
+                const dotIndex = fullFilename.lastIndexOf('.');
+                
+                // Si encuentra un punto, corta el nombre del archivo justo antes de él.
+                // Si no, usa el nombre completo.
+                const filenameWithoutExt = (dotIndex > -1) ? fullFilename.substring(0, dotIndex) : fullFilename;
+                
+                // Establece el valor del campo "Código del Plano"
+                codigoPlanoInput.value = filenameWithoutExt;
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

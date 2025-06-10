@@ -56,8 +56,8 @@
                             <td>{{ plano_item.area }}</td>
                             <td style="min-width: 250px; word-break: break-all;">{{ plano_item.nombre_archivo_original }}</td>
                             <td>{{ plano_item.fecha_subida.strftime('%Y-%m-%d %H:%M') if plano_item.fecha_subida else 'N/A' }}</td>
-                            <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>
-                            
+                            <td>{{ plano_item.descripcion if plano_item.descripcion else '-' }}</td>    
+                            <th>
                             <td class="text-center">
                                 <div class="dropdown">
                                     <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
