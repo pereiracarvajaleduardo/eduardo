@@ -38,6 +38,7 @@ fsspec==2025.3.2
 gunicorn
 greenlet==3.2.1
 griffe==1.7.3
+google-generativeai
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
