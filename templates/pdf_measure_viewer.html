@@ -1,258 +1,181 @@
 {% extends "base.html" %}
 
-{% block title %}{{ page_title | default('Herramienta de Medición PDF') }}{% endblock %}
+{# ================================================================== #}
+{# BLOQUE 1: TÍTULO DE LA PÁGINA Y ESTILOS CSS ESPECÍFICOS           #}
+{# ================================================================== #}
+{% block title %}{{ page_title | default('Herramienta de Medición') }}{% endblock %}
 
+{% block head %}
+    {{ super() }} {# Esto hereda los estilos de base.html #}
+    {# Aquí podrías enlazar un CSS externo si lo prefieres: #}
+    {# <link rel="stylesheet" href="{{ url_for('static', filename='css/measure_tool.css') }}"> #}
+    <style>
+        /* Estilos específicos para esta página para mantener todo en un archivo */
+        body {
+            /* Forzamos a que el layout ocupe toda la pantalla */
+            height: 100vh;
+            overflow: hidden; /* Evitamos el scroll principal */
+        }
+
+        .top-controls-toolbar {
+            flex-shrink: 0; /* Para que la barra no se encoja */
+        }
+        
+        .pdf-tool-layout-container {
+            display: flex;
+            gap: 1rem;
+            /* Altura calculada para ocupar el espacio restante */
+            height: calc(100vh - 100px); /* Ajusta 100px según la altura de tu navbar + toolbar */
+        }
+
+        .pdf-viewer-area {
+            flex-grow: 1;
+            position: relative;
+            overflow: auto; /* El scroll para el plano grande estará aquí */
+            border: 1px solid #ddd;
+            background-color: #e9ecef;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            /* El tamaño se lo dará el JS */
+        }
+
+        #pdf-canvas, #measure-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: block;
+        }
+        #pdf-canvas { z-index: 1; }
+        #measure-canvas { z-index: 2; }
+
+        .controls-sidebar-reduced {
+            width: 280px;
+            flex-shrink: 0;
+            overflow-y: auto;
+            height: 100%;
+        }
+
+        /* --- ESTILOS RESPONSIVOS PARA ESTA PÁGINA --- */
+        @media (max-width: 992px) {
+            body {
+                height: auto;
+                overflow: auto;
+            }
+            .pdf-tool-layout-container {
+                flex-direction: column;
+                height: auto;
+            }
+            .controls-sidebar-reduced {
+                width: 100%;
+                margin-top: 1rem;
+                height: auto;
+                max-height: 40vh; /* Límite para que no ocupe toda la pantalla */
+            }
+            .pdf-viewer-area {
+                height: 70vh; /* Altura fija para el visor en móvil */
+            }
+        }
+    </style>
+{% endblock %}
+
+
+{# ================================================================== #}
+{# BLOQUE 2: CONTENIDO PRINCIPAL DE LA PÁGINA                       #}
+{# ================================================================== #}
 {% block content %}
-{# Título de la página (puede venir de base.html o ser específico) #}
-{# Asumo que la navegación "Digital Plans", "Inicio", etc., está en base.html o encima de este bloque #}
-
-{# NUEVA BARRA DE HERRAMIENTAS SUPERIOR #}
 <div class="top-controls-toolbar card mb-3">
-    <div class="card-body">
+    <div class="card-body p-2">
         <div class="row gx-2 gy-2 align-items-center">
 
-            {# Carga de PDF #}
-            <div class="col-md-auto">
-                <div id="pdf-load-section-top">
-                    <label for="pdf-file-input-top" class="form-label form-label-sm visually-hidden">Cargar PDF</label>
-                    <input type="file" class="form-control form-control-sm" id="pdf-file-input" accept=".pdf" title="Cargar PDF Local">
-                </div>
+            <div class="col-auto">
+                <input type="file" class="form-control form-control-sm" id="pdf-file-input" accept=".pdf" title="Cargar PDF Local">
             </div>
 
-            {# Separador Visual (opcional) #}
-            <div class="col-md-auto"><div class="vr"></div></div>
+            <div class="col-auto"><div class="vr mx-1"></div></div>
 
-            {# Calibración #}
-            <div class="col-md-auto">
+            <div class="col-auto">
                 <div class="btn-group">
                     <button type="button" class="btn btn-info btn-sm" id="start-calibrate-btn" title="Iniciar Calibración Visual">Calibrar</button>
-                    {# Botón para mostrar/ocultar detalles de calibración predefinida y manual #}
-                    <button class="btn btn-outline-info btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#calibrationDetailsCollapse" aria-expanded="false" aria-controls="calibrationDetailsCollapse" title="Opciones de Calibración">
-                        Escala
-                    </button>
+                    <button class="btn btn-outline-info btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#calibrationDetailsCollapse" title="Opciones de Escala">Escala</button>
                 </div>
-                 <span id="current-scale-info" class="small ms-1" aria-live="polite">No Cal.</span>
+                <span id="current-scale-info" class="small ms-1" aria-live="polite">No Cal.</span>
             </div>
             
-            {# Separador Visual (opcional) #}
-            <div class="col-md-auto"><div class="vr"></div></div>
+            <div class="col-auto"><div class="vr mx-1"></div></div>
 
-            {# Herramientas de Medición #}
-            <div class="col-md-auto">
-                <div class="btn-group" role="group" aria-label="Herramientas de Medición">
+            <div class="col-auto">
+                <div class="btn-group" role="group">
                     <button type="button" class="btn btn-primary btn-sm" id="measure-distance-btn" title="Medir Distancia">Distancia</button>
                     <button type="button" class="btn btn-primary btn-sm" id="measure-area-btn" title="Medir Área">Área</button>
-                    <button type="button" class="btn btn-primary btn-sm" id="measure-circle-btn" title="Medir Círculo">Círculo</button>
                     <button type="button" class="btn btn-success btn-sm" id="finish-shape-btn" style="display:none;" title="Finalizar Forma">OK</button>
                 </div>
             </div>
 
-            {# Separador Visual (opcional) #}
-            <div class="col-md-auto"><div class="vr"></div></div>
+            <div class="col-auto"><div class="vr mx-1"></div></div>
 
-            {# Zoom #}
-            <div class="col-md-auto">
-                <div class="btn-group" role="group" aria-label="Zoom">
+            <div class="col-auto">
+                <div class="btn-group" role="group">
                     <button type="button" class="btn btn-secondary btn-sm" id="zoom-out-btn" title="Alejar">-</button>
                     <button type="button" class="btn btn-secondary btn-sm" id="zoom-in-btn" title="Acercar">+</button>
                 </div>
                 <span id="zoom-level-info" class="small ms-1" aria-live="polite">--%</span>
             </div>
+             
+            <div class="col-auto"><div class="vr mx-1"></div></div>
 
-            {# Paginación #}
-            <div class="col-md-auto">
-                <div class="btn-group" role="group" aria-label="Paginación">
-                    <button type="button" class="btn btn-secondary btn-sm" id="prev-page-btn" title="Página Anterior">&lt;</button>
-                    <span class="btn btn-sm disabled" style="background-color: #e9ecef; border-color: #ced4da;">
-                        <span id="page-num" aria-live="polite">0</span>/<span id="page-count" aria-live="polite">0</span>
-                    </span>
-                    <button type="button" class="btn btn-secondary btn-sm" id="next-page-btn" title="Página Siguiente">&gt;</button>
-                </div>
-                <input type="number" class="form-control form-control-sm d-inline-block" id="go-to-page-input" placeholder="Pág." min="1" style="width: 70px; margin-left: 5px;">
-                <button class="btn btn-outline-secondary btn-sm" type="button" id="go-to-page-btn" style="margin-left: -1px;">Ir</button> {/* Ajuste de margen para unir con input */}
+            {# NUEVO BLOQUE DE PAGINACIÓN #}
+            <div class="col-auto">
+                 <div class="input-group input-group-sm">
+                     <button class="btn btn-outline-secondary" type="button" id="prev-page-btn" title="Página Anterior">‹</button>
+                     <span class="input-group-text">
+                          <span id="page-num" aria-live="polite">0</span>
+                          <span class="mx-1">/</span>
+                          <span id="page-count" aria-live="polite">0</span>
+                     </span>
+                     <button class="btn btn-outline-secondary" type="button" id="next-page-btn" title="Página Siguiente">›</button>
+                     <input type="number" class="form-control" id="go-to-page-input" placeholder="Ir a pág." min="1" style="width: 90px;">
+                     <button class="btn btn-secondary" type="button" id="go-to-page-btn">Ir</button>
+                 </div>
             </div>
-            
-            {# Separador Visual (opcional) #}
-            <div class="col-md-auto"><div class="vr"></div></div>
-
-            {# Información Adicional (opcional en la barra) #}
-            <div class="col-md-auto small">
-                 <span id="measure-status" aria-live="polite"></span>
-            </div>
-        </div> {# Fin .row #}
-
-        {# Contenido Colapsable para Detalles de Calibración #}
         <div class="collapse mt-2 p-2 border rounded bg-light" id="calibrationDetailsCollapse">
-            <div class="row">
-                <div class="col-md-6">
-                    <h6>Calibración Visual (Paso 2):</h6>
-                    <p class="small mb-1">Estado: <span id="calibration-status" aria-live="polite">Esperando...</span></p>
-                    <div id="calibration-input-div" style="display:none;">
-                        <div class="mb-2">
-                            <label for="known-length" class="form-label form-label-sm">Longitud Real:</label>
-                            <input type="number" class="form-control form-control-sm" id="known-length" step="any" placeholder="Ej: 5.0">
-                        </div>
-                        <button type="button" class="btn btn-primary btn-sm w-100" id="set-scale-btn">Fijar Escala Visual</button>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <h6>Calibración Predefinida:</h6>
-                     <div class="mb-2">
-                        <label for="predefined-scale" class="form-label form-label-sm">Escala Dibujo:</label>
-                        <select id="predefined-scale" class="form-select form-select-sm">
-                            <option value="">-- Escalas --</option>
-                            <option value="1" data-scalefactor="1">1:1</option>
-                            <option value="10" data-scalefactor="10">1:10</option>
-                            <option value="20" data-scalefactor="20">1:20</option>
-                            <option value="25" data-scalefactor="25">1:25</option>
-                            <option value="50" data-scalefactor="50">1:50</option>
-                            <option value="75" data-scalefactor="75">1:75</option>
-                            <option value="100" data-scalefactor="100">1:100</option>
-                            <option value="125" data-scalefactor="125">1:125</option>
-                            <option value="200" data-scalefactor="200">1:200</option>
-                            <option value="500" data-scalefactor="500">1:500</option>
-                            {# Añade data-unit si la unidad es diferente por escala #}
-                            {# Ejemplo: <option value="96" data-scalefactor="96" data-unit="in">1in = 96px (PDF exportado de CAD)</option> #}
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <label for="known-unit" class="form-label form-label-sm">Unidad Real por defecto:</label>
-                        <select id="known-unit" class="form-select form-select-sm">
-                            <option value="m">Metros (m)</option><option value="cm">Centímetros (cm)</option>
-                            <option value="mm" selected>Milímetros (mm)</option><option value="ft">Pies (ft)</option>
-                            <option value="in">Pulgadas (in)</option>
-                        </select>
-                    </div>
-                    <button type="button" class="btn btn-primary btn-sm w-100" id="apply-predefined-scale-btn">Aplicar Escala Predefinida</button>
-                </div>
             </div>
-        </div>
-    </div> {# Fin .card-body de top-controls-toolbar #}
-</div> {# Fin .top-controls-toolbar #}
+    </div>
+</div>
 
-
-{# TÍTULO DEL PLANO (REDUCIDO) #}
-<h2 class="plan-title-display mb-3 text-center">{{ page_title | default('Visor de PDF con Herramientas de Medición') }}</h2>
-
-{# Layout principal para visor y posible barra lateral reducida #}
 <div class="pdf-tool-layout-container">
-
-    {# Columna para el Visor de PDF #}
-    <div class="pdf-viewer-area">
-        <div class="canvas-wrapper"> {# mb-3 eliminado, se maneja con el gap del layout container #}
+    <main class="pdf-viewer-area">
+        <div class="canvas-wrapper">
             <canvas id="pdf-canvas"></canvas>
             <canvas id="measure-canvas"></canvas>
         </div>
-         {# Coordenadas pueden ir aquí abajo si no caben bien arriba #}
-        <div class="mt-2 small text-muted">
-            Clic (Pantalla): <span id="screen-coords" aria-live="polite">-</span> | 
-            Clic (PDF): <span id="pdf-coords" aria-live="polite">-</span>
-        </div>
-    </div>
+    </main>
 
-    {# Columna para la Barra Lateral de Controles (Ahora principalmente para el Registro) #}
-    <div class="controls-sidebar-reduced">
-        <div class="measurements-log card">
-            <div class="card-body">
+    <aside class="controls-sidebar-reduced">
+        <div class="measurements-log card h-100">
+            <div class="card-body d-flex flex-column">
                 <h3 class="card-title h6">Registro de Mediciones</h3>
-                <ul id="measurements-list" class="list-group list-group-flush mb-2" style="max-height: 300px; overflow-y: auto;">
+                <ul id="measurements-list" class="list-group list-group-flush mb-2" style="flex-grow: 1; overflow-y: auto;">
                     {# Las mediciones se llenarán con JS #}
                 </ul>
-                <button type="button" class="btn btn-danger btn-sm w-100" id="clear-measurements-btn">Limpiar Mediciones</button>
+                <button type="button" class="btn btn-danger btn-sm w-100 mt-auto" id="clear-measurements-btn">Limpiar</button>
             </div>
         </div>
-        {# Podrías añadir aquí el #calibration-status si el colapsable es muy pequeño #}
-        {# <p class="mt-2 small">Estado Cal.: <span id="calibration-status" aria-live="polite">Esperando...</span></p> #}
-    </div> {# Fin de .controls-sidebar-reduced #}
-</div> {# Fin de .pdf-tool-layout-container #}
+    </aside>
+</div>
 {% endblock %}
 
+
+{# ================================================================== #}
+{# BLOQUE 3: SCRIPTS ESPECÍFICOS DE LA PÁGINA                       #}
+{# ================================================================== #}
 {% block scripts %}
-{{ super() }}
+{{ super() }} {# Hereda los scripts de base.html (como el de Bootstrap) #}
 <script>
+    // Pasamos las variables de Flask a JavaScript de forma segura
     const PDF_URL_TO_LOAD = "{{ pdf_url_to_load | safe if pdf_url_to_load else '' }}";
     const PDF_WORKER_URL = "{{ pdf_worker_url | safe }}";
-
-    // Inicializar el colapsable de Bootstrap si usas Bootstrap 5 JS
-    document.addEventListener('DOMContentLoaded', function () {
-        var calibrationCollapseElement = document.getElementById('calibrationDetailsCollapse');
-        if (calibrationCollapseElement) {
-            // new bootstrap.Collapse(calibrationCollapseElement, { toggle: false }); // Solo si quieres controlarlo solo por JS
-        }
-    });
 </script>
 <script type="module" src="{{ url_for('static', filename='measure_tool/js/script.js') }}"></script>
-{# Estilos CSS para este layout. Idealmente, mover a tu style.css #}
-<style>
-    /* ... (tus estilos existentes para .top-controls-toolbar, .plan-title-display, etc. se mantienen) ... */
-
-    .pdf-tool-layout-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem; /* Reducir un poco el espacio si es necesario */
-    }
-
-    .pdf-viewer-area {
-        flex-grow: 1;
-        min-width: 300px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .canvas-wrapper {
-        position: relative;
-        width: 100%;
-        flex-grow: 1;
-        border: 1px solid #ccc;
-        overflow: auto;
-        background-color: #e9ecef;
-        /* AUMENTAR ALTURA MÍNIMA Y/O PREDETERMINADA */
-        min-height: 550px; /* Aumentado desde 400px, ajusta según tu preferencia */
-        /* Si quieres que ocupe un porcentaje de la altura de la ventana visible,
-           asegúrate que los contenedores padres (html, body, y cualquier otro hasta
-           .pdf-tool-layout-container) tengan alturas definidas (ej. height: 100%).
-           Si es así, podrías usar algo como:
-           height: calc(80vh - altura_de_la_barra_superior_y_titulo);
-           Pero min-height es más simple para empezar. */
-    }
-
-    #pdf-canvas, #measure-canvas {
-        display: block;
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
-    #pdf-canvas { z-index: 1; background-color: white; }
-    #measure-canvas { z-index: 2; }
-
-    .controls-sidebar-reduced {
-        /* REDUCIR ANCHO DE LA BARRA LATERAL */
-        width: 240px; /* Reducido desde 280px, ajusta según preferencia */
-        flex-shrink: 0;
-        overflow-y: auto;
-        /* Si la barra superior es muy alta, puedes limitar la altura de la sidebar
-           para que no empuje el contenido hacia abajo si todo es muy alto: */
-        max-height: calc(100vh - 150px); /* Ejemplo: 100% de la altura visible menos unos 150px para la barra superior y márgenes */
-                                       /* Esto es opcional y depende de tu layout general */
-    }
-    .controls-sidebar-reduced .card-title.h6 { font-size: 1rem; }
-
-
-    @media (max-width: 991.98px) { /* lg breakpoint, antes de que la sidebar se apile */
-        .controls-sidebar-reduced {
-            width: 100%;
-            max-height: 35vh; /* Ajusta según necesites para el registro en móvil */
-        }
-        .pdf-tool-layout-container {
-            flex-direction: column;
-        }
-        .canvas-wrapper {
-            /* AUMENTAR ALTURA DEL CANVAS EN MODO APILADO (PANTALLAS MEDIANAS/PEQUEÑAS) */
-            height: 65vh; /* Aumentado desde 60vh, ajusta según preferencia */
-            min-height: 350px; /* También considera una altura mínima para este caso */
-        }
-    }
-
-    /* ... (el resto de tus estilos, como .file-input-hidden, etc.) ... */
-</style>
 {% endblock %}

@@ -1,0 +1,44 @@
+/* Estilos para hacer la tabla responsiva */
+@media (max-width: 768px) {
+    /* Oculta los encabezados de la tabla en móvil */
+    .table thead {
+        display: none;
+    }
+
+    /* Convierte la tabla, el cuerpo y las filas en bloques */
+    .table, .table tbody, .table tr, .table td {
+        display: block;
+        width: 100%;
+    }
+
+    /* Estilo para cada fila, que ahora será una "tarjeta" */
+    .table tr {
+        margin-bottom: 1rem;
+        border: 1px solid #dee2e6;
+        border-radius: .25rem;
+    }
+
+    /* Estilo para cada celda */
+    .table td {
+        text-align: right; /* Alinea el valor a la derecha */
+        padding-left: 50%; /* Deja espacio a la izquierda para el label */
+        position: relative;
+        border: none;
+    }
+
+    .table td::before {
+        content: attr(data-label); /* Usa el contenido del atributo 'data-label' */
+        position: absolute;
+        left: .75rem; /* Margen izquierdo del label */
+        width: 45%;
+        text-align: left; /* Alinea el texto del label a la izquierda */
+        font-weight: bold;
+    }
+
+    /* Estilo específico para la celda de acciones */
+    .table td[data-label="Acciones"] {
+        text-align: center;
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+}
