@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Gestionar Diccionario{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 class="mb-4">Gestionar Diccionario Personalizado</h2>
+    <p class="text-muted">Añade aquí términos técnicos, códigos o palabras específicas de tu proyecto para mejorar la precisión del corrector ortográfico. Después de añadir o eliminar términos, debes reiniciar la aplicación para que se carguen en memoria.</p>
+
+    {% include '_flash_messages.html' %} {# Asumiendo que tienes los mensajes en un archivo separado #}
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-header">
+            <h5 class="my-0">Añadir Nuevo Término</h5>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('manage_dictionary') }}" class="row g-3 align-items-center">
+                <div class="col-auto">
+                    <label for="palabra" class="visually-hidden">Palabra</label>
+                    <input type="text" class="form-control" id="palabra" name="palabra" placeholder="Ej: servomotor" required>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary">Añadir al Diccionario</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header">
+            <h5 class="my-0">Términos Actuales en el Diccionario</h5>
+        </div>
+        <div class="card-body">
+            {% if terminos %}
+            <ul class="list-group">
+                {% for termino in terminos %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    {{ termino.palabra }}
+                    <form action="{{ url_for('delete_term', term_id=termino.id) }}" method="POST" onsubmit="return confirm('¿Seguro que quieres eliminar este término?');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Eliminar</button>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-center text-muted">El diccionario personalizado está vacío.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
