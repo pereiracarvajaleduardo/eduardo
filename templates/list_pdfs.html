@@ -72,9 +72,9 @@
                         <td data-label="Código" style="word-break: break-all;">{{ plano_item.codigo_plano }}</td>
                         <td data-label="Revisión">{{ plano_item.revision }}</td>
                         <td data-label="Área">{{ plano_item.area }}</td>
-                        <td data-label="Disciplina"><span class="badge bg-primary">{{ plano_item.disciplina or 'N/A' }}</span></td>
+                        <td data-label="Disciplina"><span class="badge bg-primary">{{ plano_item.disciplina }}</span></td>
                         <td data-label="Archivo" style="word-break: break-all;">{{ plano_item.nombre_archivo_original }}</td>
-                        <td data-label="Fecha">{{ plano_item.fecha_subida.strftime('%Y-%m-%d %H:%M') if plano_item.fecha_subida else 'N/A' }}</td>
+                        <td>{{ plano_item.fecha_subida | local_time }}</td>
                         <td data-label="Descripción">{{ plano_item.descripcion | truncate(30) if plano_item.descripcion else '-' }}</td>
                         <td data-label="Acciones" class="text-center">
                             <div class="dropdown">

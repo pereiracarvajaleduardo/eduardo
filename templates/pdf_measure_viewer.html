@@ -1,181 +1,231 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title | default('Herramienta de Medición') }}</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
 
-{# ================================================================== #}
-{# BLOQUE 1: TÍTULO DE LA PÁGINA Y ESTILOS CSS ESPECÍFICOS           #}
-{# ================================================================== #}
-{% block title %}{{ page_title | default('Herramienta de Medición') }}{% endblock %}
-
-{% block head %}
-    {{ super() }} {# Esto hereda los estilos de base.html #}
-    {# Aquí podrías enlazar un CSS externo si lo prefieres: #}
-    {# <link rel="stylesheet" href="{{ url_for('static', filename='css/measure_tool.css') }}"> #}
     <style>
-        /* Estilos específicos para esta página para mantener todo en un archivo */
-        body {
-            /* Forzamos a que el layout ocupe toda la pantalla */
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            padding-top: 0 !important;
+            background-color: #f0f2f5;
+            box-sizing: border-box;
+        }
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        #main-measure-tool-container {
             height: 100vh;
-            overflow: hidden; /* Evitamos el scroll principal */
+            display: flex;
+            flex-direction: column;
         }
-
-        .top-controls-toolbar {
-            flex-shrink: 0; /* Para que la barra no se encoja */
+        .top-title-bar {
+            flex-shrink: 0;
+            padding: 0.75rem 1.5rem;
+            background-color: #343a40;
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 500;
+            text-align: center;
         }
-        
         .pdf-tool-layout-container {
             display: flex;
+            flex-direction: row;
+            flex-grow: 1;
+            min-height: 0;
+            padding: 1rem;
             gap: 1rem;
-            /* Altura calculada para ocupar el espacio restante */
-            height: calc(100vh - 100px); /* Ajusta 100px según la altura de tu navbar + toolbar */
         }
-
         .pdf-viewer-area {
             flex-grow: 1;
             position: relative;
-            overflow: auto; /* El scroll para el plano grande estará aquí */
+            overflow: auto;
+            border: 1px solid #ccc;
+            border-radius: 0.375rem;
+            background-color: #d8d8d8;
+        }
+        .controls-sidebar-right {
+            width: 350px;
+            flex-shrink: 0;
+            overflow-y: auto;
+            background-color: #ffffff;
             border: 1px solid #ddd;
-            background-color: #e9ecef;
+            border-radius: 0.375rem;
         }
-
-        .canvas-wrapper {
-            position: relative;
-            /* El tamaño se lo dará el JS */
-        }
-
         #pdf-canvas, #measure-canvas {
             position: absolute;
             top: 0;
             left: 0;
-            display: block;
+            box-sizing: content-box !important;
+            max-width: none !important;
+            max-height: none !important;
         }
-        #pdf-canvas { z-index: 1; }
-        #measure-canvas { z-index: 2; }
-
-        .controls-sidebar-reduced {
-            width: 280px;
-            flex-shrink: 0;
-            overflow-y: auto;
-            height: 100%;
+        #measure-canvas {
+            z-index: 2;
+            cursor: default;
         }
-
-        /* --- ESTILOS RESPONSIVOS PARA ESTA PÁGINA --- */
-        @media (max-width: 992px) {
-            body {
-                height: auto;
-                overflow: auto;
-            }
-            .pdf-tool-layout-container {
-                flex-direction: column;
-                height: auto;
-            }
-            .controls-sidebar-reduced {
-                width: 100%;
-                margin-top: 1rem;
-                height: auto;
-                max-height: 40vh; /* Límite para que no ocupe toda la pantalla */
-            }
-            .pdf-viewer-area {
-                height: 70vh; /* Altura fija para el visor en móvil */
-            }
+        .controls-sidebar-right .card {
+            border: none;
+            border-bottom: 1px solid #eee;
+            border-radius: 0;
         }
+        .controls-sidebar-right .card:last-child { border-bottom: none; }
     </style>
-{% endblock %}
+</head>
+<body>
 
+<div id="main-measure-tool-container">
 
-{# ================================================================== #}
-{# BLOQUE 2: CONTENIDO PRINCIPAL DE LA PÁGINA                       #}
-{# ================================================================== #}
-{% block content %}
-<div class="top-controls-toolbar card mb-3">
-    <div class="card-body p-2">
-        <div class="row gx-2 gy-2 align-items-center">
+    <header class="top-title-bar shadow-sm">
+        <span id="loaded-pdf-name">Cargando plano...</span>
+    </header>
+    
+    <div class="pdf-tool-layout-container">
+        
+        <main class="pdf-viewer-area">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="measure-canvas"></canvas>
+        </main>
 
-            <div class="col-auto">
-                <input type="file" class="form-control form-control-sm" id="pdf-file-input" accept=".pdf" title="Cargar PDF Local">
-            </div>
+        <aside class="controls-sidebar-right">
 
-            <div class="col-auto"><div class="vr mx-1"></div></div>
-
-            <div class="col-auto">
-                <div class="btn-group">
-                    <button type="button" class="btn btn-info btn-sm" id="start-calibrate-btn" title="Iniciar Calibración Visual">Calibrar</button>
-                    <button class="btn btn-outline-info btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#calibrationDetailsCollapse" title="Opciones de Escala">Escala</button>
-                </div>
-                <span id="current-scale-info" class="small ms-1" aria-live="polite">No Cal.</span>
-            </div>
-            
-            <div class="col-auto"><div class="vr mx-1"></div></div>
-
-            <div class="col-auto">
-                <div class="btn-group" role="group">
-                    <button type="button" class="btn btn-primary btn-sm" id="measure-distance-btn" title="Medir Distancia">Distancia</button>
-                    <button type="button" class="btn btn-primary btn-sm" id="measure-area-btn" title="Medir Área">Área</button>
-                    <button type="button" class="btn btn-success btn-sm" id="finish-shape-btn" style="display:none;" title="Finalizar Forma">OK</button>
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title mb-2">Información del Plano</h5>
+                    <div class="d-flex justify-content-between">
+                        <span class="small fw-bold">Tamaño de Página:</span>
+                        <span class="small" id="page-size-info">--</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="col-auto"><div class="vr mx-1"></div></div>
-
-            <div class="col-auto">
-                <div class="btn-group" role="group">
-                    <button type="button" class="btn btn-secondary btn-sm" id="zoom-out-btn" title="Alejar">-</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="zoom-in-btn" title="Acercar">+</button>
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Herramientas</h5>
+                    <div class="btn-group w-100">
+                        <button type="button" class="btn btn-primary" id="measure-distance-btn">Distancia</button>
+                        <button type="button" class="btn btn-primary" id="measure-area-btn">Área</button>
+                        <button type="button" class="btn btn-success" id="finish-shape-btn" style="display:none;">OK</button>
+                    </div>
                 </div>
-                <span id="zoom-level-info" class="small ms-1" aria-live="polite">--%</span>
             </div>
-             
-            <div class="col-auto"><div class="vr mx-1"></div></div>
 
-            {# NUEVO BLOQUE DE PAGINACIÓN #}
-            <div class="col-auto">
-                 <div class="input-group input-group-sm">
-                     <button class="btn btn-outline-secondary" type="button" id="prev-page-btn" title="Página Anterior">‹</button>
-                     <span class="input-group-text">
-                          <span id="page-num" aria-live="polite">0</span>
-                          <span class="mx-1">/</span>
-                          <span id="page-count" aria-live="polite">0</span>
-                     </span>
-                     <button class="btn btn-outline-secondary" type="button" id="next-page-btn" title="Página Siguiente">›</button>
-                     <input type="number" class="form-control" id="go-to-page-input" placeholder="Ir a pág." min="1" style="width: 90px;">
-                     <button class="btn btn-secondary" type="button" id="go-to-page-btn">Ir</button>
+            <div class="card">
+                 <div class="card-body">
+                    <h5 class="card-title mb-3">Navegación</h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label mb-0 small">Página:</label>
+                        <div class="input-group input-group-sm w-50">
+                            <button class="btn btn-outline-secondary" type="button" id="prev-page-btn">‹</button>
+                            <span class="input-group-text"><span id="page-num">0</span>/<span id="page-count">0</span></span>
+                            <button class="btn btn-outline-secondary" type="button" id="next-page-btn">›</button>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label mb-0 small">Zoom:</label>
+                        <div class="input-group input-group-sm w-50">
+                            <button class="btn btn-outline-secondary" type="button" id="zoom-out-btn">-</button>
+                            <span id="zoom-level-info" class="input-group-text">100%</span>
+                            <button class="btn btn-outline-secondary" type="button" id="zoom-in-btn">+</button>
+                        </div>
+                    </div>
+                    <div class="input-group input-group-sm">
+                         <input type="number" class="form-control" id="go-to-page-input" placeholder="Ir a pág..." min="1" aria-label="Ir a la página">
+                         <button class="btn btn-secondary" type="button" id="go-to-page-btn">Ir</button>
+                    </div>
                  </div>
             </div>
-        <div class="collapse mt-2 p-2 border rounded bg-light" id="calibrationDetailsCollapse">
+
+             <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Visualización</h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-grid-btn">
+                        <label class="form-check-label" for="toggle-grid-btn">Mostrar Cuadrícula</label>
+                    </div>
+                    <div id="grid-controls" style="display: none;">
+                        <label class="form-label small">Espaciado:</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" value="1" id="grid-spacing-input">
+                            <select id="grid-unit-select" class="form-select" style="max-width: 80px;">
+                                <option value="m">Metros</option><option value="cm">Cm</option><option value="mm" selected>Mm</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title d-flex justify-content-between">
+                        Escala <span id="current-scale-info" class="badge bg-dark my-auto">No Cal.</span>
+                    </h5>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label small mb-0">1. Calibrar Manualmente:</label>
+                        <button class="btn btn-danger btn-sm" id="reset-scale-btn" title="Borrar la calibración actual">Reiniciar</button>
+                    </div>
+                    <button type="button" class="btn btn-info w-100 btn-sm" id="start-calibrate-btn">Dibujar Línea</button>
+                    <div id="calibration-input-div" style="display:none;" class="mt-2 p-2 border rounded bg-light">
+                        <label for="known-length" class="form-label form-label-sm">Longitud Real:</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" id="known-length" step="any" placeholder="Ej: 5.0">
+                             <select id="known-unit" class="form-select" style="max-width: 70px;">
+                                <option value="m">m</option><option value="cm">cm</option><option value="mm" selected>mm</option><option value="ft">ft</option><option value="in">in</option>
+                            </select>
+                            <button type="button" class="btn btn-dark" id="set-scale-btn">Fijar</button>
+                        </div>
+                    </div>
+                    <label class="form-label small mt-3">2. Usar Escala Rápida:</label>
+                    <div class="input-group input-group-sm">
+                        <select id="predefined-scale" class="form-select">
+                            <option value="">-- Escalas Comunes --</option>
+                            <option value="1">1:1</option>
+                            <option value="5">1:5</option>
+                            <option value="10">1:10</option>
+                            <option value="15">1:15</option>
+                            <option value="20">1:20</option>
+                            <option value="25">1:25</option>
+                            <option value="30">1:30</option>
+                            <option value="35">1:35</option>
+                            <option value="50">1:50</option>
+                            <option value="75">1:75</option>
+                            <option value="100">1:100</option>
+                            <option value="125">1:125</option>
+                            <option value="200">1:200</option>
+                            <option value="250">1:250</option>
+                            <option value="500">1:500</option>
+                            <option value="1000">1:1000</option>
+                       </select>
+                        <button type="button" class="btn btn-dark" id="apply-predefined-scale-btn">Aplicar</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card flex-grow-1 d-flex flex-column mb-0">
+                <div class="card-body d-flex flex-column">
+                    <h5 class="card-title">Registro</h5>
+                    <div class="measurements-log flex-grow-1" style="overflow-y: auto; min-height: 100px;">
+                        <ul id="measurements-list" class="list-group list-group-flush"></ul>
+                    </div>
+                    <button type="button" class="btn btn-danger w-100 mt-3" id="clear-measurements-btn">Limpiar Mediciones</button>
+                </div>
+            </div>
+
+        </aside>
     </div>
 </div>
 
-<div class="pdf-tool-layout-container">
-    <main class="pdf-viewer-area">
-        <div class="canvas-wrapper">
-            <canvas id="pdf-canvas"></canvas>
-            <canvas id="measure-canvas"></canvas>
-        </div>
-    </main>
-
-    <aside class="controls-sidebar-reduced">
-        <div class="measurements-log card h-100">
-            <div class="card-body d-flex flex-column">
-                <h3 class="card-title h6">Registro de Mediciones</h3>
-                <ul id="measurements-list" class="list-group list-group-flush mb-2" style="flex-grow: 1; overflow-y: auto;">
-                    {# Las mediciones se llenarán con JS #}
-                </ul>
-                <button type="button" class="btn btn-danger btn-sm w-100 mt-auto" id="clear-measurements-btn">Limpiar</button>
-            </div>
-        </div>
-    </aside>
-</div>
-{% endblock %}
-
-
-{# ================================================================== #}
-{# BLOQUE 3: SCRIPTS ESPECÍFICOS DE LA PÁGINA                       #}
-{# ================================================================== #}
-{% block scripts %}
-{{ super() }} {# Hereda los scripts de base.html (como el de Bootstrap) #}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 <script>
-    // Pasamos las variables de Flask a JavaScript de forma segura
     const PDF_URL_TO_LOAD = "{{ pdf_url_to_load | safe if pdf_url_to_load else '' }}";
-    const PDF_WORKER_URL = "{{ pdf_worker_url | safe }}";
+    const PDF_WORKER_URL = "{{ url_for('static', filename='lib/pdfjs/build/pdf.worker.mjs') }}";
+    const PDF_FILENAME = "{{ pdf_filename | default('') | safe }}";
 </script>
 <script type="module" src="{{ url_for('static', filename='measure_tool/js/script.js') }}"></script>
-{% endblock %}
+
+</body>
+</html>

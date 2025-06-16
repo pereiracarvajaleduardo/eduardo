@@ -19,6 +19,7 @@ import boto3
 import docx
 import spacy
 import pdfplumber
+import pytz
 import google.generativeai as genai
 from dotenv import load_dotenv
 from botocore.client import Config
@@ -220,6 +221,55 @@ class TerminoPersonalizado(db.Model):
 # 6. FUNCIONES DE UTILIDAD Y AUXILIARES
 # ==============================================================================
 
+@app.template_filter('local_time')
+def format_datetime_local(utc_dt):
+    """Convierte una fecha UTC a la zona horaria de Chile."""
+    if not utc_dt:
+        return ""
+    try:
+        # Define la zona horaria de Chile
+        local_tz = pytz.timezone('America/Santiago')
+        # Convierte la fecha de la base de datos a la hora local
+        local_dt = utc_dt.astimezone(local_tz)
+        # Devuelve la fecha formateada
+        return local_dt.strftime('%Y-%m-%d %H:%M')
+    except Exception as e:
+        app.logger.error(f"Error al convertir la zona horaria: {e}")
+        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
+
+@app.template_filter('local_time')
+def format_datetime_local(utc_dt):
+    """Convierte una fecha UTC a la zona horaria de Chile."""
+    if not utc_dt:
+        return ""
+    try:
+        # Define la zona horaria de Chile
+        local_tz = pytz.timezone('America/Santiago')
+        # Convierte la fecha de la base de datos a la hora local
+        local_dt = utc_dt.astimezone(local_tz)
+        # Devuelve la fecha formateada
+        return local_dt.strftime('%Y-%m-%d %H:%M')
+    except Exception as e:
+        app.logger.error(f"Error al convertir la zona horaria: {e}")
+        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
+
+@app.template_filter('local_time')
+def format_datetime_local(utc_dt):
+    """Convierte una fecha UTC a la zona horaria de Chile."""
+    if not utc_dt:
+        return ""
+    try:
+        # Define la zona horaria de Chile
+        local_tz = pytz.timezone('America/Santiago')
+        # Convierte la fecha de la base de datos a la hora local
+        local_dt = utc_dt.astimezone(local_tz)
+        # Devuelve la fecha formateada
+        return local_dt.strftime('%Y-%m-%d %H:%M')
+    except Exception as e:
+        app.logger.error(f"Error al convertir la zona horaria: {e}")
+        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -361,7 +411,9 @@ def extraer_datos_del_cajetin(pdf_stream):
 
             patrones = {
                 "codigo_plano": [
-                    r"(?i)(?:Drawing\s*No|Plano\s*N[°º]|Document\s*Code)\.?:\s*([\w\.\-]+)",
+                    # Este patrón ahora busca específicamente el código asociado a la etiqueta correcta
+                    r"(?i)Doc\.\s*Code\s*&\s*Serial\s*No\.\s*([\w\-]+)", 
+                    # Mantenemos el antiguo como respaldo, por si acaso
                     r"(K484-[\w\-]+)",
                 ],
                 "revision": [
@@ -371,15 +423,24 @@ def extraer_datos_del_cajetin(pdf_stream):
                 "area": [r"\b(WSA|SWS|TQ|PIPING|MECANICA|OOCC|SERVICIOS)\b"],
             }
 
-            for clave, lista_regex in patrones.items():
-                for regex in lista_regex:
-                    match = re.search(regex, texto_cajetin)
-                    if match and match.group(1):
-                        datos_extraidos[clave] = match.group(1).strip().upper()
-                        app.logger.info(
-                            f"Dato extraído del cajetín -> {clave}: {datos_extraidos[clave]}"
-                        )
-                        break
+            palabras_invalidas = ["PAGE", "REV", "REVISION", "SCALE", "DATE", "PROJ", "IND"]
+
+        for clave, lista_regex in patrones.items():
+            for regex in lista_regex:
+                match = re.search(regex, texto_cajetin, re.IGNORECASE)
+                if match and match.group(1):
+                    valor_extraido = match.group(1).strip().upper()
+                    
+                    # VALIDACIÓN AÑADIDA: Si la palabra extraída está en nuestra lista de "malas palabras", la ignoramos y seguimos buscando.
+                    if clave == 'codigo_plano' and valor_extraido in palabras_invalidas:
+                        continue # Ignora este match y prueba el siguiente patrón
+
+                    datos_extraidos[clave] = valor_extraido
+                    app.logger.info(
+                        f"Dato extraído del cajetín -> {clave}: {datos_extraidos[clave]}"
+                    )
+                    break # Si encontramos un match válido para esta clave, pasamos a la siguiente clave (ej. revisión)
+        datos_extraidos['texto_cajetin_bruto'] = texto_cajetin 
         pdf_stream.seek(0)
         return datos_extraidos
     except Exception as e:
@@ -477,6 +538,22 @@ def actualizar_tsvector_plano(plano_id_val, codigo_plano_val, area_val, descripc
         )
         raise
 
+def determinar_area_por_regla(texto_plano):
+    """Aplica reglas numéricas para determinar el área a partir de un texto."""
+    if not texto_plano:
+        return None
+    
+    # Usamos "in" para ver si el número está en cualquier parte del texto del cajetín
+    if "3800" in texto_plano or "3890" in texto_plano:
+        app.logger.info("Regla numérica aplicada: Se encontró 3800/3890. Área asignada: wsa")
+        return "wsa"
+    
+    if "3900" in texto_plano or "3990" in texto_plano:
+        app.logger.info("Regla numérica aplicada: Se encontró 3900/3990. Área asignada: sws")
+        return "sws"
+        
+    return None
+
 
 # ==============================================================================
 # 7. PROCESADORES DE CONTEXTO DE FLASK
@@ -534,6 +611,7 @@ def index():
     return render_template("index.html")
 
 
+# Reemplaza tu función upload_pdf completa con esta versión mejorada
 @app.route("/upload", methods=["GET", "POST"])
 @login_required
 def upload_pdf():
@@ -544,11 +622,7 @@ def upload_pdf():
         flash("Subida de archivos deshabilitada: Faltan configuraciones de R2.", "danger")
         return redirect(url_for("index"))
 
-    upload_areas = (
-        [area[0] for area in db.session.query(Plano.area).distinct().order_by(Plano.area).all()]
-        if current_user.role == "admin"
-        else current_user.allowed_areas
-    )
+    upload_areas = ([area[0] for area in db.session.query(Plano.area).distinct().order_by(Plano.area).all()] if current_user.role == "admin" else current_user.allowed_areas)
 
     if request.method == "GET":
         return render_template("upload_pdf.html", upload_areas=upload_areas)
@@ -561,89 +635,89 @@ def upload_pdf():
 
     try:
         file_bytes = file_obj.read()
-        original_filename = file_obj.filename
+        original_filename = secure_filename(file_obj.filename)
         _, ext = os.path.splitext(original_filename)
 
-        datos_extraidos = {}
-        if ext.lower() == ".pdf":
-            datos_extraidos = extraer_datos_del_cajetin(io.BytesIO(file_bytes))
-            if datos_extraidos:
-                flash(f"Datos extraídos del PDF: {datos_extraidos}", "info")
+        datos_extraidos = extraer_datos_del_cajetin(io.BytesIO(file_bytes))
+        texto_cajetin = datos_extraidos.get('texto_cajetin_bruto')
+        
+        # --- Lógica de extracción y validación de datos ---
+        codigo_plano_form = os.path.splitext(original_filename)[0]
+        codigo_plano_cajetin = datos_extraidos.get("codigo_plano")
+        codigo_plano_final = codigo_plano_form or codigo_plano_cajetin
 
-        codigo_plano_final = datos_extraidos.get("codigo_plano") or os.path.splitext(original_filename)[0]
-        revision_final = (request.form.get("revision", "").strip() or datos_extraidos.get("revision") or extraer_revision_del_filename(original_filename))
-        area_final = datos_extraidos.get("area") or request.form.get("area", "").strip()
+        revision_final = (request.form.get("revision", "").strip() or extraer_revision_del_filename(original_filename) or datos_extraidos.get("revision"))
         descripcion_form = request.form.get("descripcion", "").strip()
 
-        errores_validacion = []
-        if not codigo_plano_final:
-            errores_validacion.append("el 'Código de Plano' no pudo ser determinado")
-        if not revision_final:
-            errores_validacion.append("la 'Revisión' no pudo ser determinada desde el formulario o el nombre del archivo")
+        area_final = datos_extraidos.get("area") or request.form.get("area", "").strip()
+        if not area_final and texto_cajetin:
+            area_final = determinar_area_por_regla(texto_cajetin)
         if not area_final:
-            errores_validacion.append("el 'Área' no pudo ser determinada desde el formulario o el contenido del PDF")
-
-        if errores_validacion:
-            # Unimos todos los errores encontrados en un solo mensaje para el usuario
-            mensaje_final = "Error de validación: " + ", ".join(errores_validacion).capitalize() + "."
-            flash(mensaje_final, 'danger') # Usamos 'danger' para que resalte más
+            area_final = "00"
+            flash("ADVERTENCIA: Área no detectada. Se ha asignado '00' por defecto.", "warning")
+        
+        if not codigo_plano_final or not revision_final:
+            flash("Error crítico: No se pudo determinar el Código de Plano o la Revisión del archivo.", 'danger')
             return redirect(url_for('upload_pdf'))
-
+            
         if current_user.role == "cargador" and area_final not in current_user.allowed_areas:
             flash(f"No tienes permiso para subir archivos al área '{area_final}'.", "danger")
             return redirect(url_for("upload_pdf"))
+
+        # --- NUEVA LÓGICA PROFESIONAL DE MANEJO DE REVISIONES ---
+        planos_con_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_final).all()
         
-        # Lógica de verificación de revisiones duplicadas o antiguas
-        planos_existentes = Plano.query.filter_by(codigo_plano=codigo_plano_final).all()
-        # (Aquí va la lógica completa para verificar revisiones que ya tenías)
+        for p_existente in planos_con_mismo_codigo:
+            if p_existente.revision == revision_final:
+                flash(f"Error: Ya existe un plano con el código '{codigo_plano_final}' y la revisión '{revision_final}'. No se realizaron cambios.", "danger")
+                return redirect(url_for("list_pdfs"))
+            if es_revision_mas_nueva(p_existente.revision, revision_final):
+                flash(f"Error: Ya existe una revisión más nueva ('{p_existente.revision}') de este plano en el sistema. No se puede subir una revisión anterior.", "warning")
+                return redirect(url_for("list_pdfs"))
 
         s3 = get_s3_client()
         if not s3:
             raise Exception("Cliente S3 no disponible.")
 
-        # Eliminar planos antiguos
-        for p_antiguo in planos_existentes:
+        # Si llegamos aquí, la nueva revisión es la más reciente o es la primera.
+        # Borramos todas las revisiones anteriores.
+        for p_antiguo in planos_con_mismo_codigo:
             if p_antiguo.r2_object_key:
-                s3.delete_object(Bucket=R2_BUCKET_NAME, Key=p_antiguo.r2_object_key)
+                try:
+                    s3.delete_object(Bucket=R2_BUCKET_NAME, Key=p_antiguo.r2_object_key)
+                    app.logger.info(f"Archivo antiguo '{p_antiguo.r2_object_key}' eliminado de R2.")
+                except ClientError as e:
+                    app.logger.error(f"Error al eliminar objeto antiguo de R2 '{p_antiguo.r2_object_key}': {e}")
             db.session.delete(p_antiguo)
-        
-        # Crear nombres y claves
+
+        # Crear nombres y claves para el nuevo archivo
         cleaned_area = clean_for_path(area_final)
         cleaned_codigo = clean_for_path(codigo_plano_final)
         cleaned_revision = clean_for_path(revision_final)
         r2_filename = f"{cleaned_codigo}_Rev{cleaned_revision}{ext.lower()}"
         r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{r2_filename}"
 
-        # Procesar y subir archivo
+        # Procesar y subir archivo nuevo
         texto_contenido, idioma = extraer_texto_del_archivo(io.BytesIO(file_bytes), original_filename)
         disciplina_ia = clasificar_contenido_plano(texto_contenido)
-        s3.upload_fileobj(io.BytesIO(file_bytes), R2_BUCKET_NAME, r2_object_key_nuevo)
+        s3.upload_fileobj(io.BytesIO(file_bytes), R2_BUCKET_NAME, r2_object_key_nuevo, ExtraArgs={'ContentType': 'application/pdf'})
         
         # Guardar en Base de Datos
         nuevo_plano = Plano(
-            codigo_plano=codigo_plano_final,
-            revision=revision_final,
-            area=area_final,
-            nombre_archivo_original=secure_filename(original_filename),
-            r2_object_key=r2_object_key_nuevo,
-            descripcion=descripcion_form,
-            idioma_documento=idioma,
-            disciplina=disciplina_ia,
+            codigo_plano=codigo_plano_final, revision=revision_final, area=area_final,
+            nombre_archivo_original=original_filename, r2_object_key=r2_object_key_nuevo,
+            descripcion=descripcion_form, idioma_documento=idioma, disciplina=disciplina_ia,
         )
         db.session.add(nuevo_plano)
-        db.session.flush() # Para obtener el ID del nuevo plano
+        db.session.flush()
 
         actualizar_tsvector_plano(
-            nuevo_plano.id,
-            nuevo_plano.codigo_plano,
-            nuevo_plano.area,
-            nuevo_plano.descripcion,
-            texto_contenido,
-            idioma,
+            nuevo_plano.id, nuevo_plano.codigo_plano, nuevo_plano.area,
+            nuevo_plano.descripcion, texto_contenido, idioma,
         )
 
         db.session.commit()
-        flash(f"Archivo '{original_filename}' (Rev: {revision_final}) subido exitosamente.", "success")
+        flash(f"Archivo '{original_filename}' (Rev: {revision_final}) subido y procesado exitosamente.", "success")
         return redirect(url_for("list_pdfs"))
 
     except Exception as e:
@@ -912,6 +986,7 @@ def visor_medidor_pdf(object_key):
             pdf_url_to_load=pdf_presigned_url,
             pdf_worker_url=pdf_worker_url,
             page_title=page_title,
+            pdf_filename=plano.nombre_archivo_original
         )
     except Exception as e:
         flash(f"Error al preparar el visor de medición: {str(e)}", "danger")
