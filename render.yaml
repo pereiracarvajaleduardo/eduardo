@@ -18,7 +18,7 @@ services:
           name: gestor-planos-db
           property: connectionString
       - key: PYTHON_VERSION
-        value: "3.11.9" # O la versión de Python que estés usando
+        value: "3.13" # O la versión de Python que estés usando
       # --- ¡IMPORTANTE! AÑADE TUS SECRETOS AQUÍ ---
       # Ve al dashboard de Render, a la sección de Environment, y añade estos secretos.
       # No los escribas directamente aquí por seguridad.
