@@ -3,7 +3,7 @@ services:
   - type: psql
     name: gestor-planos-db
     plan: free # Puedes cambiarlo a un plan de pago si necesitas más potencia
-    psqlVersion: "15"
+    psqlVersion: 15
 
   # 2. Servicio de la Aplicación Web (Flask)
   - type: web
