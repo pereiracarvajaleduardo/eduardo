@@ -75,7 +75,14 @@
                         <td data-label="Disciplina"><span class="badge bg-primary">{{ plano_item.disciplina }}</span></td>
                         <td data-label="Archivo" style="word-break: break-all;">{{ plano_item.nombre_archivo_original }}</td>
                         <td>{{ plano_item.fecha_subida | local_time }}</td>
-                        <td data-label="Descripción">{{ plano_item.descripcion | truncate(30) if plano_item.descripcion else '-' }}</td>
+                        
+                        <td data-label="Descripción" 
+                            data-bs-toggle="tooltip" 
+                            data-bs-placement="top" 
+                            title="{{ plano_item.descripcion or 'Sin descripción.' }}">
+                            {{ plano_item.descripcion | truncate(50) if plano_item.descripcion else '-' }}
+                        </td>
+
                         <td data-label="Acciones" class="text-center">
                             <div class="dropdown">
                                 <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -115,16 +122,25 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    // Tu código existente para la búsqueda por voz
     const voiceSearchBtn = document.getElementById('voiceSearchBtn');
     const searchInput = document.getElementById('q_contenido');
     const voiceSearchStatus = document.getElementById('voiceSearchStatus');
 
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-        // ... (el resto de tu código JS va aquí sin cambios)
+        // ... (el resto de tu código JS de voz va aquí sin cambios)
     } else {
         if(voiceSearchBtn) voiceSearchBtn.style.display = 'none';
         if(voiceSearchStatus) voiceSearchStatus.textContent = 'Búsqueda por voz no compatible.';
     }
+
+    // =============================================
+    // == SCRIPT AÑADIDO PARA ACTIVAR LOS TOOLTIPS ==
+    // =============================================
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+      return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
 });
 </script>
 {% endblock %}

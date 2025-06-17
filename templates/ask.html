@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Pregúntale a tus Planos{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-10 offset-md-1">
+            <h2 class="text-center mb-4">
+                <i class="fas fa-comments me-2"></i> Búsqueda Conversacional
+            </h2>
+            <p class="text-center text-muted">
+                Haz una pregunta en lenguaje natural sobre el contenido de tus planos. La IA buscará en los documentos relevantes y te dará una respuesta basada en ellos.
+            </p>
+
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div id="chat-window" class="mb-3" style="height: 50vh; overflow-y: auto; border: 1px solid #ddd; padding: 15px; border-radius: 5px; background-color: #f9f9f9;">
+                        <div class="d-flex flex-row justify-content-start mb-3">
+                            <div class="p-3 ms-3" style="border-radius: 15px; background-color: #e6f7ff;">
+                                <p class="small mb-0">¡Hola! Soy tu asistente de planos. ¿Qué necesitas saber hoy? Por ejemplo: <em>"¿cuál es el diámetro de la tubería principal en el área de servicios?"</em></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form id="ask-form">
+                        <div class="input-group">
+                            <input type="text" id="question-input" class="form-control form-control-lg" placeholder="Escribe tu pregunta aquí..." autocomplete="off" required>
+                            <button class="btn btn-primary" type="submit" id="ask-button">
+                                <i class="fas fa-paper-plane"></i> Enviar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('ask-form');
+    const input = document.getElementById('question-input');
+    const button = document.getElementById('ask-button');
+    const chatWindow = document.getElementById('chat-window');
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const question = input.value.trim();
+        if (!question) return;
+
+        addMessage(question, 'user');
+        input.value = '';
+        input.disabled = true;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Buscando...';
+
+        const thinkingMessage = addMessage('...', 'bot', true);
+
+        try {
+            const response = await fetch("{{ url_for('api_ask_gemini') }}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ question: question })
+            });
+
+            const data = await response.json();
+            let botResponseHtml = '';
+
+            if (response.ok) {
+                botResponseHtml = data.answer.replace(/\n/g, '<br>');
+                
+                if (data.sources && data.sources.length > 0) {
+                    botResponseHtml += '<hr><p class="mt-3"><strong>Fuentes consultadas:</strong></p><ul>';
+                    data.sources.forEach(source => {
+                        botResponseHtml += `<li>
+                            <a href="${source.url}" target="_blank" title="${source.descripcion}">${source.codigo} (Rev: ${source.revision})</a>
+                        </li>`;
+                    });
+                    botResponseHtml += '</ul>';
+                }
+            } else {
+                botResponseHtml = `<span class="text-danger">Error: ${data.error || 'No se pudo obtener respuesta.'}</span>`;
+            }
+            thinkingMessage.innerHTML = `<p class="small mb-0">${botResponseHtml}</p>`;
+
+        } catch (error) {
+            console.error('Error en la petición:', error);
+            thinkingMessage.innerHTML = '<p class="small mb-0 text-danger">Hubo un problema de conexión con el servidor.</p>';
+        } finally {
+            input.disabled = false;
+            button.disabled = false;
+            button.innerHTML = '<i class="fas fa-paper-plane"></i> Enviar';
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            input.focus();
+        }
+    });
+
+    function addMessage(text, sender, isThinking = false) {
+        const messageWrapper = document.createElement('div');
+        const messageContent = document.createElement('div');
+        
+        if (sender === 'user') {
+            messageWrapper.className = 'd-flex flex-row justify-content-end mb-3';
+            messageContent.className = 'p-3 me-3 border shadow-sm';
+            messageContent.style.borderRadius = '15px';
+            messageContent.style.backgroundColor = '#fbfbfb';
+        } else { // bot
+            messageWrapper.className = 'd-flex flex-row justify-content-start mb-3';
+            messageContent.className = 'p-3 ms-3 shadow-sm';
+            messageContent.style.borderRadius = '15px';
+            messageContent.style.backgroundColor = '#e6f7ff';
+        }
+
+        if (isThinking) {
+            messageContent.innerHTML = `<p class="small mb-0">
+                <span class="spinner-grow spinner-grow-sm"></span>
+                <span class="spinner-grow spinner-grow-sm"></span>
+                <span class="spinner-grow spinner-grow-sm"></span>
+            </p>`;
+        } else {
+            messageContent.innerHTML = `<p class="small mb-0">${text}</p>`;
+        }
+
+        messageWrapper.appendChild(messageContent);
+        chatWindow.appendChild(messageWrapper);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+        
+        return messageContent; 
+    }
+});
+</script>
+{% endblock %}

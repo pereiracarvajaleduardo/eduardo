@@ -1,70 +1,39 @@
 {% extends "base.html" %}
 
-{% block title %}Subir Plano PDF{% endblock %}
+{% block title %}Subir Nuevos Planos{% endblock %}
 
 {% block content %}
-<div class="card">
-    <div class="card-header">
-        <h2>Subir Nuevo Plano PDF a Cloudflare R2</h2>
-    </div>
-    <div class="card-body">
-        <form method="POST" enctype="multipart/form-data">
+<div class="container mt-4">
+    <div class="card shadow-sm">
+        <div class="card-header">
+            <h3>Subir Nuevos Planos a Cloudflare R2</h3>
+        </div>
+        <div class="card-body">
+            <p class="card-text text-muted">Puedes seleccionar hasta 3 archivos PDF a la vez. El sistema los procesará uno por uno.</p>
+            
             <div class="mb-3">
-                <label for="pdf_file" class="form-label">Selecciona el archivo PDF (*):</label>
-                <input type="file" class="form-control" name="file_to_upload" id="file_to_upload" required accept=".pdf,.txt,.docx,.xlsx,.dwg,.dxf,.jpg,.jpeg,.png">
+                <label for="file-input" class="form-label fw-bold">1. Selecciona los archivos PDF:</label>
+                <input class="form-control form-control-lg" type="file" id="file-input" accept=".pdf" multiple>
             </div>
-            <div class="mb-3">
-                <label for="codigo_plano" class="form-label">Código del Plano (*):</label>
-                <input type="text" class="form-control" id="codigo_plano" name="codigo_plano" placeholder="Ej: K484-0000-0000-MR-4100-01-C3808-CA1105-0002" required>
+
+            <div class="d-grid gap-2">
+                <button type="button" class="btn btn-success btn-lg" id="start-upload-btn" disabled>
+                    Por favor, selecciona archivos
+                </button>
             </div>
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label for="revision" class="form-label">Revisión (*):</label>
-                    <input type="text" class="form-control" id="revision" name="revision" placeholder="Ej: 0, 1, A, B">
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label for="area" class="form-label">Área (*):</label>
-                    <input type="text" class="form-control" id="area" name="area" placeholder="Ej: Mecánica, Piping, Eléctrica">
-                </div>
+
+            <div id="upload-queue-wrapper" class="mt-4" style="display: none;">
+                <hr>
+                <h5 class="mb-3">Archivos en Cola:</h5>
+                <div id="upload-queue">
+                    </div>
             </div>
-            <div class="mb-3">
-                <label for="descripcion" class="form-label">Descripción (Opcional):</label>
-                <textarea class="form-control" id="descripcion" name="descripcion" rows="3"></textarea>
-            </div>
-            <button type="submit" class="btn btn-success">Subir y Registrar PDF</button>
-            <a href="{{ url_for('index') }}" class="btn btn-secondary">Cancelar</a>
-        </form>
-        <p class="mt-2"><small>(*) Campos obligatorios.</small></p>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Busca el input del archivo y el input del código del plano
-    const fileInput = document.getElementById('file_to_upload');
-    const codigoPlanoInput = document.getElementById('codigo_plano');
-
-    if (fileInput && codigoPlanoInput) {
-        // Añade un 'escuchador' que se activa cuando el usuario selecciona un archivo
-        fileInput.addEventListener('change', function() {
-            // Obtiene el nombre del archivo seleccionado
-            const fullFilename = fileInput.value.split('\\').pop();
-            
-            if (fullFilename) {
-                // Encuentra la posición del último punto para quitar la extensión
-                const dotIndex = fullFilename.lastIndexOf('.');
-                
-                // Si encuentra un punto, corta el nombre del archivo justo antes de él.
-                // Si no, usa el nombre completo.
-                const filenameWithoutExt = (dotIndex > -1) ? fullFilename.substring(0, dotIndex) : fullFilename;
-                
-                // Establece el valor del campo "Código del Plano"
-                codigoPlanoInput.value = filenameWithoutExt;
-            }
-        });
-    }
-});
-</script>
+    {{ super() }}
+    <script src="{{ url_for('static', filename='js/upload_manager.js') }}"></script>
 {% endblock %}

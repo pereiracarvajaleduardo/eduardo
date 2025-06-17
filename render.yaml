@@ -1,0 +1,39 @@
+services:
+  # 1. Servicio de Base de Datos (PostgreSQL)
+  - type: psql
+    name: gestor-planos-db
+    plan: free # Puedes cambiarlo a un plan de pago si necesitas más potencia
+    psqlVersion: "15"
+
+  # 2. Servicio de la Aplicación Web (Flask)
+  - type: web
+    name: gestor-planos-app
+    env: python
+    plan: free # El plan gratuito puede ser lento al arrancar, considera un plan de pago para producción
+    buildCommand: "./build.sh" # Le dice a Render que ejecute nuestro script de construcción
+    startCommand: "gunicorn --worker-class gevent --bind 0.0.0.0:$PORT app:app" # Comando para iniciar con gunicorn
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gestor-planos-db
+          property: connectionString
+      - key: PYTHON_VERSION
+        value: "3.11.9" # O la versión de Python que estés usando
+      # --- ¡IMPORTANTE! AÑADE TUS SECRETOS AQUÍ ---
+      # Ve al dashboard de Render, a la sección de Environment, y añade estos secretos.
+      # No los escribas directamente aquí por seguridad.
+      # Marca la opción "Secret File" si prefieres.
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true # Render puede generar una clave segura por ti
