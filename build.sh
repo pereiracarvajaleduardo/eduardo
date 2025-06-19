@@ -2,8 +2,11 @@
 # exit on error
 set -o errexit
 
-# 1. Instala las dependencias del sistema operativo (Poppler)
-apt-get update && apt-get install -y poppler-utils
+echo "--- Instalando dependencias del sistema ---"
+apt-get update
+apt-get install -y --no-install-recommends poppler-utils
 
-# 2. Instala las dependencias de Python
+echo "--- Instalando dependencias de Python ---"
 pip install -r requirements.txt
+
+echo "--- Compilación finalizada exitosamente ---"
