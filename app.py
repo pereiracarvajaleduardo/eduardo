@@ -17,6 +17,8 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 # ----------------------------------------
 # Módulos de terceros (Third-party)
 # ----------------------------------------
+import tempfile
+import shutil
 import boto3
 import docx
 import spacy
@@ -803,12 +805,13 @@ def index():
         )
     return render_template("index.html")
 
-# =================================================
-# REEMPLAZA TU FUNCIÓN UPLOAD_PDF COMPLETA CON ESTA VERSIÓN
-# =================================================
+# ==============================================================================
+# == RUTA DE SUBIDA COMPLETA Y OPTIMIZADA PARA MEMORIA (STREAMING) ==
+# ==============================================================================
 @app.route("/upload", methods=["GET", "POST"])
 @login_required
 def upload_pdf():
+    # --- Verificaciones iniciales (sin cambios) ---
     if request.method == "GET":
         if current_user.role not in ["admin", "cargador"]:
             flash("No tienes permiso para ver esta página.", "danger")
@@ -822,24 +825,30 @@ def upload_pdf():
     if not file_obj or not file_obj.filename:
         return jsonify({'status': 'error', 'message': 'No se recibió ningún archivo.'}), 400
 
-    try:
-        original_filename = secure_filename(file_obj.filename)
-        file_bytes = file_obj.read()
-        file_stream = io.BytesIO(file_bytes)
+    original_filename = secure_filename(file_obj.filename)
+    temp_file_path = None  # Inicializamos la variable de la ruta temporal
 
-        datos_cajetin = extraer_datos_del_cajetin(file_stream)
+    try:
+        # --- 1. Guardar el archivo subido en un archivo temporal en disco ---
+        # Esto evita cargar el archivo completo en la memoria RAM.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_f:
+            temp_file_path = temp_f.name
+            shutil.copyfileobj(file_obj.stream, temp_f)
+        
+        app.logger.info(f"Archivo '{original_filename}' guardado temporalmente en '{temp_file_path}'")
+
+        # --- 2. Extraer metadatos desde el archivo temporal ---
+        # Todas las lecturas ahora usan el archivo en disco, manteniendo la RAM baja.
+        with open(temp_file_path, "rb") as f:
+            datos_cajetin = extraer_datos_del_cajetin(f)
+        
         texto_cajetin_bruto = datos_cajetin.get('texto_cajetin_bruto', '')
         info_filename = parsear_nombre_de_archivo(original_filename)
 
-        # =================================================================
-        # == INICIO DE LA LÓGICA DE METADATOS CORREGIDA Y ROBUSTA ==
-        # =================================================================
-        
-        # 1. Inicializamos las variables a None para prevenir UnboundLocalError
+        # --- 3. Lógica de asignación de metadatos (tu código original) ---
         codigo_plano_final = None
         revision_final = None
 
-        # 2. Lógica para el CÓDIGO DEL PLANO
         codigo_desde_cajetin = datos_cajetin.get('codigo_plano')
         codigo_desde_filename = info_filename.get('codigo')
         PALABRAS_INVALIDAS = ["PAGE", "VIEW", "IEW", "DWG", "DRAWING", "PLANO"]
@@ -849,49 +858,39 @@ def upload_pdf():
         else:
             codigo_plano_final = codigo_desde_filename
 
-        # 3. Lógica para la REVISIÓN usando la nueva función inteligente
         revision_final = elegir_mejor_revision(
             datos_cajetin.get('revision'),
             info_filename.get('revision')
         )
- 
         
-        # 4. Asignación final (fallback) si todo lo anterior falló
-        # Esta línea que antes fallaba, ahora funcionará porque las variables siempre existen.
         if not codigo_plano_final:
             codigo_plano_final = os.path.splitext(original_filename)[0]
         if not revision_final:
             msg = f"No se pudo determinar una REVISIÓN válida para el archivo."
             return jsonify({'status': 'error', 'message': msg}), 400
 
-        # =================================================================
-        # == FIN DE LA LÓGICA DE METADATOS ==
-        # =================================================================
-
-        # ... El resto de la función (lógica de área, duplicados, guardado, etc.) continúa exactamente igual ...
+        # --- 4. Lógica de asignación de área y permisos (tu código original) ---
         area_detectada = datos_cajetin.get("area") or determinar_area_por_regla(texto_cajetin_bruto)
         area_final = "sin_clasificar"
         mensaje_adicional = ""
 
         if current_user.role == 'admin':
             area_final = area_detectada or "sin_clasificar"
-            app.logger.info(f"Usuario ADMIN subiendo. Área final asignada: '{area_final}'")
         elif current_user.role == 'cargador':
             user_allowed_areas = current_user.allowed_areas
             if not user_allowed_areas:
-                return jsonify({'status': 'error', 'message': 'Tu cuenta de cargador no tiene áreas asignadas. No puedes subir archivos.'}), 403
+                return jsonify({'status': 'error', 'message': 'Tu cuenta de cargador no tiene áreas asignadas.'}), 403
+            
             if area_detectada and area_detectada.lower() in [a.lower() for a in user_allowed_areas]:
                 area_final = area_detectada
-                app.logger.info(f"Cargador '{current_user.username}' subiendo. Área detectada '{area_final}' es válida.")
             else:
-                area_final = user_allowed_areas[0] 
+                area_final = user_allowed_areas[0]
                 if area_detectada:
-                    app.logger.warning(f"Cargador '{current_user.username}' subiendo. Área detectada '{area_detectada}' NO es válida. Forzando a '{area_final}'.")
                     mensaje_adicional = f"El área detectada fue '{area_detectada}', pero se asignó a tu área permitida: '{area_final}'."
                 else:
-                    app.logger.info(f"Cargador '{current_user.username}' subiendo. No se detectó área. Asignando a su área por defecto: '{area_final}'.")
                     mensaje_adicional = f"Archivo asignado a tu área por defecto: '{area_final}'."
         
+        # --- 5. Verificación de duplicados y limpieza de versiones antiguas (tu código original) ---
         planos_con_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_final).all()
         for p_existente in planos_con_mismo_codigo:
             if p_existente.revision == revision_final:
@@ -900,34 +899,37 @@ def upload_pdf():
                 return jsonify({'status': 'error', 'message': f"Error: Ya existe una revisión más nueva ('{p_existente.revision}')."}), 409
 
         s3 = get_s3_client()
+        if not s3:
+            return jsonify({'status': 'error', 'message': 'Error de configuración del almacenamiento.'}), 500
+
         for p_antiguo in planos_con_mismo_codigo:
             if p_antiguo.r2_object_key:
                 s3.delete_object(Bucket=R2_BUCKET_NAME, Key=p_antiguo.r2_object_key)
             db.session.delete(p_antiguo)
-
+        
+        # --- 6. Subida a R2 y procesamiento de IA desde el archivo temporal ---
         cleaned_area = clean_for_path(area_final)
         r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{original_filename}"
+
+        # Subimos el archivo a R2 desde el archivo en disco, no desde la memoria.
+        with open(temp_file_path, "rb") as f:
+            s3.upload_fileobj(f, R2_BUCKET_NAME, r2_object_key_nuevo, ExtraArgs={'ContentType': 'application/pdf'})
+        app.logger.info(f"Archivo subido a R2 con la clave: {r2_object_key_nuevo}")
         
-        texto_contenido, idioma = extraer_texto_del_archivo(io.BytesIO(file_bytes), original_filename)
+        # Extraemos texto para la IA, también desde el archivo en disco.
+        with open(temp_file_path, "rb") as f:
+            texto_contenido, idioma = extraer_texto_del_archivo(f, original_filename)
         
-        # Llamamos a nuestra nueva y potente función de IA
         informe_ia = analizar_contenido_con_ia(texto_contenido)
         
-        # Asignamos los valores a variables, con valores por defecto si la IA falla
-        disciplina_final = "Sin clasificar"
-        sub_disciplina_final = None
-        palabras_clave_final = None
-        resumen_final = ""
-
+        disciplina_final, sub_disciplina_final, palabras_clave_final, resumen_final = "Sin clasificar", None, None, ""
         if informe_ia:
             disciplina_final = informe_ia.get("disciplina", "Sin clasificar")
             sub_disciplina_final = informe_ia.get("sub_disciplina")
-            # Convertimos la lista de palabras clave a un string separado por comas
             palabras_clave_final = ", ".join(informe_ia.get("palabras_clave", []))
             resumen_final = informe_ia.get("resumen_corto")
 
-        s3.upload_fileobj(io.BytesIO(file_bytes), R2_BUCKET_NAME, r2_object_key_nuevo, ExtraArgs={'ContentType': 'application/pdf'})
-        
+        # --- 7. Guardado en la base de datos (tu código original) ---
         nuevo_plano = Plano(
             codigo_plano=codigo_plano_final,
             revision=revision_final,
@@ -935,35 +937,37 @@ def upload_pdf():
             nombre_archivo_original=original_filename,
             r2_object_key=r2_object_key_nuevo,
             idioma_documento=idioma,
-            # Guardamos todos los nuevos datos de la IA
             disciplina=disciplina_final,
             sub_disciplina=sub_disciplina_final,
             palabras_clave_ia=palabras_clave_final,
-            descripcion=resumen_final # La descripción ahora es el resumen de la IA
+            descripcion=resumen_final
         )
         db.session.add(nuevo_plano)
         db.session.flush()
         
         actualizar_tsvector_plano(
-            nuevo_plano.id, 
-            nuevo_plano.codigo_plano, 
-            nuevo_plano.area, 
-            nuevo_plano.descripcion,
-            texto_contenido, 
-            idioma
+            nuevo_plano.id, nuevo_plano.codigo_plano, nuevo_plano.area, 
+            nuevo_plano.descripcion, texto_contenido, idioma
         )
         db.session.commit()
         
-        success_message = f"Archivo '{original_filename}' subido y procesado con IA exitosamente."
+        success_message = f"Archivo '{original_filename}' subido y procesado exitosamente."
         if mensaje_adicional:
             success_message += f" {mensaje_adicional}"
-            
+        
         return jsonify({'status': 'success', 'message': success_message}), 200
 
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Error en subida asíncrona: {e}", exc_info=True)
+        app.logger.error(f"Error en subida de archivo: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'Ocurrió un error interno en el servidor: {e}'}), 500
+
+    finally:
+        # --- 8. Limpieza del archivo temporal ---
+        # Este bloque se ejecuta siempre, incluso si hay un error, para no dejar basura en el disco.
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+            app.logger.info(f"Archivo temporal '{temp_file_path}' eliminado.")
 
 @app.route("/pdfs")
 @login_required
