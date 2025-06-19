@@ -122,7 +122,7 @@ R2_CONFIG_MISSING = not all(
 # ==============================================================================
 # == AÑADE ESTE BLOQUE EXACTAMENTE AQUÍ ==
 # --- Configuración de Dependencias Externas ---
-POPPLER_PATH = r"C:\Users\Admin\Desktop\gestor_planos_r2\poppler\bin"
+
 # ==============================================================================
 
 
@@ -1249,10 +1249,10 @@ def ask_page():
 @app.route("/api/ask-gemini", methods=["POST"])
 @login_required
 def api_ask_gemini():
-    # --- 1. Obtención de datos de la solicitud (sin cambios) ---
+    # --- 1. Obtención de datos de la solicitud ---
     pregunta = request.json.get("question")
     historial = request.json.get("history", []) 
-    
+
     if not pregunta:
         return jsonify({"error": "No se proporcionó ninguna pregunta."}), 400
     if not os.getenv("GOOGLE_API_KEY"):
@@ -1262,14 +1262,14 @@ def api_ask_gemini():
         app.logger.info(f"Iniciando búsqueda híbrida para: '{pregunta}'")
         app.logger.info(f"Historial de conversación recibido: {len(historial)} turnos.")
 
-        # --- 2. Búsqueda y recuperación de documentos (sin cambios) ---
+        # --- 2. Búsqueda y recuperación de documentos ---
         codigos_extraidos = extraer_codigos_tecnicos(pregunta)
         texto_natural = re.sub(r'\s*'.join(map(re.escape, codigos_extraidos)), '', pregunta, flags=re.IGNORECASE) if codigos_extraidos else pregunta
         terminos_lematizados = lematizar_texto(texto_natural, NLP_ES, "español").split()
 
         base_query = Plano.query
         search_conditions = []
-        
+
         if terminos_lematizados or codigos_extraidos:
             query_parts = []
             if codigos_extraidos: query_parts.append(" & ".join(codigos_extraidos))
@@ -1280,7 +1280,7 @@ def api_ask_gemini():
         if codigos_extraidos:
             for codigo in codigos_extraidos:
                 search_conditions.append(or_(Plano.descripcion.ilike(f'%{codigo}%'), Plano.codigo_plano.ilike(f'%{codigo}%')))
-        
+
         if not search_conditions:
             return jsonify({"answer": "Por favor, haz una pregunta más específica.", "sources": []})
 
@@ -1288,16 +1288,16 @@ def api_ask_gemini():
 
         if not planos_relevantes:
             return jsonify({"answer": "No pude encontrar ningún plano que coincida con tu pregunta.", "sources": []})
-        
-        # --- 3. Construcción del Prompt Multimodal (con la nueva lógica robusta) ---
+
+        # --- 3. Construcción del Prompt Multimodal ---
         model = genai.GenerativeModel("gemini-1.5-pro")
         prompt_multimodal = []
-        
+
         # Incorporación del historial
         for turno in historial:
             rol_api = "model" if turno.get("role") == "assistant" else "user"
             prompt_multimodal.append({"role": rol_api, "parts": [turno.get("text")]})
-        
+
         # Añadimos la nueva pregunta del usuario con las instrucciones
         prompt_multimodal.append({
             "role": "user",
@@ -1307,51 +1307,55 @@ def api_ask_gemini():
                 Analiza todas las imágenes para formular tu respuesta. Si la pregunta implica comparar o unir información de varios planos, hazlo.
                 Sé extremadamente preciso. Si te preguntan por medidas, cotas o diámetros, busca los números exactos en la imagen.
                 Si no puedes encontrar la respuesta en las imágenes, indícalo claramente.
-                
+
                 PREGUNTA ACTUAL DEL USUARIO: "{pregunta}"
                 """
             ]
         })
-        
-        s3 = get_s3_client()
-        if not s3: # Verificación adicional del cliente S3 para evitar errores.
-             return jsonify({"error": "Error de configuración del servidor: El almacenamiento no está disponible."}), 503
 
-        # NUEVO: Bandera para verificar si logramos procesar al menos un plano.
+        s3 = get_s3_client()
+        if not s3:
+            return jsonify({"error": "Error de configuración del servidor: El almacenamiento no está disponible."}), 503
+
         documentos_procesados_ok = False
-        
+
         app.logger.info(f"Se encontraron {len(planos_relevantes)} planos. Analizando visualmente los primeros 3.")
-        
+
+        # ===== INICIO DEL CAMBIO IMPORTANTE =====
+        # Obtiene la ruta de Poppler desde las variables de entorno.
+        # Será 'None' en el servidor, lo cual es correcto.
+        poppler_path_local = os.getenv("POPPLER_PATH")
+        # ===== FIN DEL CAMBIO IMPORTANTE =====
+
         for plano in planos_relevantes[:3]:
             try:
                 response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano.r2_object_key)
-                pdf_bytes = response["Body"].read() # La variable se crea aquí.
-                
-                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path=POPPLER_PATH, first_page=1, last_page=1)
-                
+                pdf_bytes = response["Body"].read()
+
+                # ===== INICIO DEL CAMBIO IMPORTANTE =====
+                # Pasa la ruta local a la función. Si es 'None', pdf2image buscará Poppler en el PATH del sistema.
+                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path=poppler_path_local, first_page=1, last_page=1)
+                # ===== FIN DEL CAMBIO IMPORTANTE =====
+
                 if imagenes_pdf:
                     prompt_multimodal[-1]["parts"].append(f"\n\n--- INICIO ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} (Rev: {plano.revision}) ---")
                     prompt_multimodal[-1]["parts"].append(imagenes_pdf[0])
                     prompt_multimodal[-1]["parts"].append(f"--- FIN ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} ---")
-                    
-                    # NUEVO: Si llegamos aquí, significa que al menos un plano se procesó bien.
+
                     documentos_procesados_ok = True
 
             except Exception as e_proc:
-                # Si un plano individual falla, solo registramos el error y continuamos con el siguiente.
                 app.logger.error(f"Error procesando el plano {plano.codigo_plano} para análisis visual: {e_proc}")
 
-        # NUEVO: Verificación de seguridad ANTES de llamar a la IA.
-        # Si ningún documento se pudo procesar, no continuamos.
         if not documentos_procesados_ok:
             app.logger.error("No se pudo procesar ningún documento fuente para el análisis visual.")
             return jsonify({"error": "No se pudieron procesar los planos fuente. Pueden estar corruptos o no ser accesibles."}), 500
 
-        # --- 4. Generación de la Respuesta (sin cambios) ---
+        # --- 4. Generación de la Respuesta ---
         chat_session = model.start_chat(history=prompt_multimodal[:-1])
         response = chat_session.send_message(prompt_multimodal[-1])
 
-        # --- 5. Envío de la Respuesta al Frontend (sin cambios) ---
+        # --- 5. Envío de la Respuesta al Frontend ---
         fuentes = [{
             "codigo": p.codigo_plano, "revision": p.revision, 
             "descripcion": p.descripcion, "url": url_for('view_file', object_key=p.r2_object_key)
@@ -1366,7 +1370,7 @@ def api_ask_gemini():
         if "Poppler" in str(e):
             app.logger.error(f"Error de Poppler: {e}", exc_info=True)
             return jsonify({"error": "Error de configuración: No se encontró la dependencia 'Poppler'."}), 500
-        
+
         app.logger.error(f"Error en API de búsqueda conversacional: {e}", exc_info=True)
         return jsonify({"error": "Ocurrió un error inesperado al procesar tu pregunta."}), 500
 # ----------------------------------------
