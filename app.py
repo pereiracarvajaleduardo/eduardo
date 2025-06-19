@@ -10,6 +10,7 @@
 import os
 import re
 import io
+import json
 from datetime import datetime, timezone
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 
@@ -39,7 +40,7 @@ from PIL import Image # <-- ¡NUEVA!
 # ----------------------------------------
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Index, func
+from sqlalchemy import Index, func, or_ 
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from flask_login import (
     LoginManager,
@@ -116,6 +117,13 @@ R2_CONFIG_MISSING = not all(
     [R2_BUCKET_NAME, R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]
 )
 
+# ==============================================================================
+# == AÑADE ESTE BLOQUE EXACTAMENTE AQUÍ ==
+# --- Configuración de Dependencias Externas ---
+POPPLER_PATH = r"C:\Users\Admin\Desktop\gestor_planos_r2\poppler\bin"
+# ==============================================================================
+
+
 
 # ==============================================================================
 # 4. INICIALIZACIÓN DE EXTENSIONES Y SERVICIOS
@@ -190,6 +198,7 @@ class User(UserMixin, db.Model):
         return f"<User {self.username} ({self.role})>"
 
 
+
 class Plano(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     codigo_plano = db.Column(db.String(200), nullable=False)
@@ -202,6 +211,10 @@ class Plano(db.Model):
     idioma_documento = db.Column(db.String(10), nullable=True, default="spanish")
     tsvector_contenido = db.Column(TSVECTOR)
     disciplina = db.Column(db.String(100), nullable=True, index=True)
+    
+    # --- NUEVAS COLUMNAS AÑADIDAS ---
+    sub_disciplina = db.Column(db.String(255), nullable=True)
+    palabras_clave_ia = db.Column(db.Text, nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint("codigo_plano", "revision", name="uq_codigo_plano_revision"),
@@ -331,34 +344,59 @@ def extraer_datos_del_cajetin(pdf_stream):
 
     return datos_extraidos
 
-def clasificar_contenido_plano(texto_plano):
-    """Usa la API de Google Gemini para clasificar el texto de un plano en una disciplina."""
+# Reemplaza la antigua función de IA por esta en app.py
+
+def analizar_contenido_con_ia(texto_plano):
+    """
+    Usa la API de Google Gemini para extraer un informe estructurado del texto de un plano.
+    Devuelve un diccionario con disciplina, sub-disciplina, palabras clave y un resumen.
+    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not texto_plano or not api_key:
-        return "Sin clasificar"
+        return None
 
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        categorias = "Fundación, Estructural, Mecánico, Eléctrico, Piping, Instrumentación, Proceso, Detalle Constructivo, General"
+        
+        categorias = "Mecánico, Eléctrico, Piping, Instrumentación, Civil, Estructural, Arquitectura, Proceso, General"
+        
         prompt = f"""
         Actúas como un ingeniero de proyectos experto en clasificación de documentos técnicos.
-        Analiza el siguiente texto extraído de un plano y determina su disciplina o enfoque principal.
-        Responde con UNA SOLA categoría de la siguiente lista: [{categorias}].
-        Si no estás seguro, responde 'General'.
+        Analiza el siguiente texto extraído de un plano y devuelve tu análisis en un formato JSON estricto.
+
+        El objeto JSON debe tener las siguientes claves:
+        1. "disciplina": UNA SOLA categoría de la siguiente lista: [{categorias}].
+        2. "sub_disciplina": Una categoría más específica que identifiques (ej: "HVAC", "Fundaciones", "Tuberías de alta presión"). Si no estás seguro, pon "N/A".
+        3. "palabras_clave": Un array de Python con 3 a 5 palabras o frases cortas clave del texto que justifican tu elección.
+        4. "resumen_corto": Un resumen técnico de una sola frase describiendo el propósito principal del plano.
 
         Texto a analizar:
         ---
         {texto_plano[:4000]}
         ---
-        La disciplina principal es: 
+
+        Responde únicamente con el objeto JSON, sin añadir texto adicional antes o después.
         """
+        
         response = model.generate_content(prompt)
-        disciplina = response.text.strip()
-        app.logger.info(f"Gemini clasificó el plano como: '{disciplina}'")
-        return disciplina
+        
+        # Limpiar la respuesta para asegurarnos de que es un JSON válido
+        cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
+        
+        # Parsear la respuesta JSON
+        analysis_result = json.loads(cleaned_response)
+        
+        # Validar que el diccionario tiene las claves esperadas
+        required_keys = ["disciplina", "sub_disciplina", "palabras_clave", "resumen_corto"]
+        if all(key in analysis_result for key in required_keys):
+            return analysis_result
+        else:
+            app.logger.error("La respuesta JSON de la IA no contenía todas las claves requeridas.")
+            return None
+
     except Exception as e:
-        app.logger.error(f"Error en la API de Gemini para clasificación: {e}")
-        return "Error de clasificación"
+        app.logger.error(f"Error en la API de Gemini o al procesar JSON: {e}")
+        return None
 
 
 
@@ -870,11 +908,24 @@ def upload_pdf():
         cleaned_area = clean_for_path(area_final)
         r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{original_filename}"
         
-        texto_contenido, idioma = extraer_texto_del_archivo(file_stream, original_filename)
+        texto_contenido, idioma = extraer_texto_del_archivo(io.BytesIO(file_bytes), original_filename)
         
-        resumen_ia = generar_resumen_con_ia(texto_contenido, idioma)
-        disciplina_ia = clasificar_contenido_plano(texto_contenido)
+        # Llamamos a nuestra nueva y potente función de IA
+        informe_ia = analizar_contenido_con_ia(texto_contenido)
         
+        # Asignamos los valores a variables, con valores por defecto si la IA falla
+        disciplina_final = "Sin clasificar"
+        sub_disciplina_final = None
+        palabras_clave_final = None
+        resumen_final = ""
+
+        if informe_ia:
+            disciplina_final = informe_ia.get("disciplina", "Sin clasificar")
+            sub_disciplina_final = informe_ia.get("sub_disciplina")
+            # Convertimos la lista de palabras clave a un string separado por comas
+            palabras_clave_final = ", ".join(informe_ia.get("palabras_clave", []))
+            resumen_final = informe_ia.get("resumen_corto")
+
         s3.upload_fileobj(io.BytesIO(file_bytes), R2_BUCKET_NAME, r2_object_key_nuevo, ExtraArgs={'ContentType': 'application/pdf'})
         
         nuevo_plano = Plano(
@@ -883,9 +934,12 @@ def upload_pdf():
             area=area_final,
             nombre_archivo_original=original_filename,
             r2_object_key=r2_object_key_nuevo,
-            descripcion=resumen_ia,
             idioma_documento=idioma,
-            disciplina=disciplina_ia
+            # Guardamos todos los nuevos datos de la IA
+            disciplina=disciplina_final,
+            sub_disciplina=sub_disciplina_final,
+            palabras_clave_ia=palabras_clave_final,
+            descripcion=resumen_final # La descripción ahora es el resumen de la IA
         )
         db.session.add(nuevo_plano)
         db.session.flush()
@@ -1185,13 +1239,16 @@ def ask_page():
     return render_template("ask.html")
 
 
-# ================================================================
-# == RUTA COMPLETA Y FINAL PARA LA BÚSQUEDA CONVERSACIONAL (MULTIMODAL) ==
-# ================================================================
+# =================================================================================
+# == RUTA /api/ask-gemini VERSIÓN FINAL (MÁS ROBUSTA CONTRA ERRORES) ==
+# =================================================================================
 @app.route("/api/ask-gemini", methods=["POST"])
 @login_required
 def api_ask_gemini():
+    # --- 1. Obtención de datos de la solicitud (sin cambios) ---
     pregunta = request.json.get("question")
+    historial = request.json.get("history", []) 
+    
     if not pregunta:
         return jsonify({"error": "No se proporcionó ninguna pregunta."}), 400
     if not os.getenv("GOOGLE_API_KEY"):
@@ -1199,94 +1256,98 @@ def api_ask_gemini():
 
     try:
         app.logger.info(f"Iniciando búsqueda híbrida para: '{pregunta}'")
+        app.logger.info(f"Historial de conversación recibido: {len(historial)} turnos.")
 
-        # 1. Extracción de códigos y texto natural (sin cambios)
+        # --- 2. Búsqueda y recuperación de documentos (sin cambios) ---
         codigos_extraidos = extraer_codigos_tecnicos(pregunta)
         texto_natural = re.sub(r'\s*'.join(map(re.escape, codigos_extraidos)), '', pregunta, flags=re.IGNORECASE) if codigos_extraidos else pregunta
         terminos_lematizados = lematizar_texto(texto_natural, NLP_ES, "español").split()
 
-        # 2. Construcción de la consulta híbrida
         base_query = Plano.query
         search_conditions = []
-
-        # Condición 1: Búsqueda de Texto Completo (FTS)
+        
         if terminos_lematizados or codigos_extraidos:
             query_parts = []
-            if codigos_extraidos:
-                query_parts.append(" & ".join(codigos_extraidos))
-            if terminos_lematizados:
-                query_parts.append(" & ".join(terminos_lematizados)) # Usamos AND para más precisión
-            
+            if codigos_extraidos: query_parts.append(" & ".join(codigos_extraidos))
+            if terminos_lematizados: query_parts.append(" & ".join(terminos_lematizados))
             tsquery_string = " & ".join(filter(None, query_parts))
-            app.logger.info(f"Buscando con FTS: {tsquery_string}")
-            search_conditions.append(Plano.tsvector_contenido.op('@@')(func.to_tsquery('spanish', tsquery_string)))
-
-        # Condición 2: Búsqueda de Texto Simple (LIKE) para cada código
-        # Esto es muy efectivo para códigos con guiones o caracteres especiales.
+            if tsquery_string:
+                search_conditions.append(Plano.tsvector_contenido.op('@@')(func.to_tsquery('spanish', tsquery_string)))
         if codigos_extraidos:
             for codigo in codigos_extraidos:
-                # Buscamos el código en la descripción o en el nombre del plano
-                search_conditions.append(Plano.descripcion.ilike(f'%{codigo}%'))
-                search_conditions.append(Plano.codigo_plano.ilike(f'%{codigo}%'))
+                search_conditions.append(or_(Plano.descripcion.ilike(f'%{codigo}%'), Plano.codigo_plano.ilike(f'%{codigo}%')))
         
         if not search_conditions:
             return jsonify({"answer": "Por favor, haz una pregunta más específica.", "sources": []})
 
-        # Combinamos todas las condiciones con un OR. Un plano es relevante si cumple CUALQUIERA de ellas.
         planos_relevantes = base_query.filter(or_(*search_conditions)).limit(5).all()
 
         if not planos_relevantes:
-            return jsonify({
-                "answer": "No pude encontrar ningún plano que coincida con los términos clave de tu pregunta. Verifica que los códigos sean correctos.",
-                "sources": []
-            })
+            return jsonify({"answer": "No pude encontrar ningún plano que coincida con tu pregunta.", "sources": []})
         
-        # 3. El resto de la función (análisis visual) continúa sin cambios...
-        plano_principal = planos_relevantes[0]
-        app.logger.info(f"Analizando visualmente el plano principal: {plano_principal.codigo_plano}")
-
+        # --- 3. Construcción del Prompt Multimodal (con la nueva lógica robusta) ---
+        model = genai.GenerativeModel("gemini-1.5-pro")
+        prompt_multimodal = []
+        
+        # Incorporación del historial
+        for turno in historial:
+            rol_api = "model" if turno.get("role") == "assistant" else "user"
+            prompt_multimodal.append({"role": rol_api, "parts": [turno.get("text")]})
+        
+        # Añadimos la nueva pregunta del usuario con las instrucciones
+        prompt_multimodal.append({
+            "role": "user",
+            "parts": [
+                f"""
+                Eres un ingeniero experto leyendo planos técnicos. Tu tarea es responder la pregunta del usuario basándote en un conjunto de IMÁGENES de planos que te proporciono a continuación.
+                Analiza todas las imágenes para formular tu respuesta. Si la pregunta implica comparar o unir información de varios planos, hazlo.
+                Sé extremadamente preciso. Si te preguntan por medidas, cotas o diámetros, busca los números exactos en la imagen.
+                Si no puedes encontrar la respuesta en las imágenes, indícalo claramente.
+                
+                PREGUNTA ACTUAL DEL USUARIO: "{pregunta}"
+                """
+            ]
+        })
+        
         s3 = get_s3_client()
-        response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano_principal.r2_object_key)
-        pdf_bytes = response["Body"].read()
+        if not s3: # Verificación adicional del cliente S3 para evitar errores.
+             return jsonify({"error": "Error de configuración del servidor: El almacenamiento no está disponible."}), 503
 
-        # --- INICIO DE LA PARTE IMPORTANTE (LA RUTA A POPPLER) ---
-        # Le indicamos a Python la ruta exacta donde están los ejecutables de Poppler.
-        poppler_path = r"C:\Users\Admin\Desktop\gestor_planos_r2\poppler\bin"
+        # NUEVO: Bandera para verificar si logramos procesar al menos un plano.
+        documentos_procesados_ok = False
         
-        imagenes_pdf = convert_from_bytes(
-            pdf_bytes,
-            poppler_path=poppler_path,  # Aquí se usa la ruta
-            first_page=1,
-            last_page=1
-        )
-        # --- FIN DE LA PARTE IMPORTANTE ---
-
-        imagen_plano = imagenes_pdf[0] if imagenes_pdf else None
-
-        if not imagen_plano:
-            return jsonify({"error": "No se pudo convertir el PDF a imagen para el análisis."}), 500
-
-        texto_plano_extraido, _ = extraer_texto_del_archivo(io.BytesIO(pdf_bytes), plano_principal.nombre_archivo_original)
-
-        # --- Envío de la Consulta Multimodal a Gemini ---
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        app.logger.info(f"Se encontraron {len(planos_relevantes)} planos. Analizando visualmente los primeros 3.")
         
-        prompt_multimodal = [
-            f"""
-            Eres un ingeniero experto leyendo planos técnicos. Tu tarea es responder la pregunta del usuario basándote en la IMAGEN del plano que te proporciono. Usa el texto extraído solo como un apoyo secundario.
-            Sé extremadamente preciso. Si te preguntan por medidas, cotas, elevaciones o diámetros, busca los números exactos en la imagen. No inventes información.
-            Si no puedes encontrar la respuesta en la imagen, indica que no se encuentra la información visualmente en el documento.
+        for plano in planos_relevantes[:3]:
+            try:
+                response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano.r2_object_key)
+                pdf_bytes = response["Body"].read() # La variable se crea aquí.
+                
+                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path=POPPLER_PATH, first_page=1, last_page=1)
+                
+                if imagenes_pdf:
+                    prompt_multimodal[-1]["parts"].append(f"\n\n--- INICIO ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} (Rev: {plano.revision}) ---")
+                    prompt_multimodal[-1]["parts"].append(imagenes_pdf[0])
+                    prompt_multimodal[-1]["parts"].append(f"--- FIN ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} ---")
+                    
+                    # NUEVO: Si llegamos aquí, significa que al menos un plano se procesó bien.
+                    documentos_procesados_ok = True
 
-            PREGUNTA DEL USUARIO: "{pregunta}"
+            except Exception as e_proc:
+                # Si un plano individual falla, solo registramos el error y continuamos con el siguiente.
+                app.logger.error(f"Error procesando el plano {plano.codigo_plano} para análisis visual: {e_proc}")
 
-            TEXTO EXTRAÍDO DEL PLANO (solo para contexto):
-            {texto_plano_extraido[:3000]}
-            """,
-            imagen_plano
-        ]
+        # NUEVO: Verificación de seguridad ANTES de llamar a la IA.
+        # Si ningún documento se pudo procesar, no continuamos.
+        if not documentos_procesados_ok:
+            app.logger.error("No se pudo procesar ningún documento fuente para el análisis visual.")
+            return jsonify({"error": "No se pudieron procesar los planos fuente. Pueden estar corruptos o no ser accesibles."}), 500
 
-        response = model.generate_content(prompt_multimodal)
-        
+        # --- 4. Generación de la Respuesta (sin cambios) ---
+        chat_session = model.start_chat(history=prompt_multimodal[:-1])
+        response = chat_session.send_message(prompt_multimodal[-1])
+
+        # --- 5. Envío de la Respuesta al Frontend (sin cambios) ---
         fuentes = [{
             "codigo": p.codigo_plano, "revision": p.revision, 
             "descripcion": p.descripcion, "url": url_for('view_file', object_key=p.r2_object_key)
@@ -1299,10 +1360,10 @@ def api_ask_gemini():
 
     except Exception as e:
         if "Poppler" in str(e):
-             app.logger.error(f"Error de Poppler: {e}", exc_info=True)
-             return jsonify({"error": "Error de configuración del servidor: No se encontró la dependencia 'Poppler'. Contacta al administrador."}), 500
+            app.logger.error(f"Error de Poppler: {e}", exc_info=True)
+            return jsonify({"error": "Error de configuración: No se encontró la dependencia 'Poppler'."}), 500
         
-        app.logger.error(f"Error en API de búsqueda conversacional multimodal: {e}", exc_info=True)
+        app.logger.error(f"Error en API de búsqueda conversacional: {e}", exc_info=True)
         return jsonify({"error": "Ocurrió un error inesperado al procesar tu pregunta."}), 500
 # ----------------------------------------
 # Rutas de Administración
