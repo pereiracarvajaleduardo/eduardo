@@ -8,8 +8,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Actualiza el gestor de paquetes e instala poppler-utils y otras herramientas
-# Esto se ejecuta como root DENTRO del proceso de construcción de la imagen, por lo que funcionará.
+# Actualiza el gestor de paquetes e instala poppler-utils
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -23,9 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia el resto del código de tu aplicación al contenedor
 COPY . .
 
-# Expone el puerto en el que tu aplicación se ejecuta (los logs de Render mencionan el 10000)
+# Expone el puerto en el que tu aplicación se ejecuta
 EXPOSE 10000
 
-# El comando para iniciar tu aplicación cuando el contenedor arranque
-# Usa Gunicorn para producción, es más robusto que el servidor de desarrollo de Flask
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "2", "app:app"]
+# El comando para iniciar tu aplicación con las optimizaciones de memoria
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "1", "--timeout", "120", "--preload", "app:app"]
+
