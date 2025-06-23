@@ -1,0 +1,22 @@
+Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Entorno virtual de Python
+.venv
+venv
+env
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de SQLite (si usas uno para desarrollo local)
+*.db
+*.sqlite3
