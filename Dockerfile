@@ -28,4 +28,4 @@ EXPOSE 10000
 
 # El comando para iniciar tu aplicación cuando el contenedor arranque
 # Usa Gunicorn para producción, es más robusto que el servidor de desarrollo de Flask
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "2", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "1", "app:app"]
