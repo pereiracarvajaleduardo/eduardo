@@ -34,16 +34,15 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from packaging.version import parse as parse_version, InvalidVersion
 from langdetect import detect as lang_detect_func, LangDetectException
-from pdf2image import convert_from_bytes # <-- ¡NUEVA!
-from PIL import Image # <-- ¡NUEVA!
+from pdf2image import convert_from_bytes
+from PIL import Image
 
 # ----------------------------------------
 # Módulos de Flask y extensiones
 # ----------------------------------------
-from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Index, func, or_ 
-from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy import Index, func, or_
+from sqlalchemy.dialects.postgresql import TSVECTOR, JSONB
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -72,15 +71,8 @@ REVISION_FORMAT_ERROR_MSG = (
     "No se permiten espacios."
 )
 ALLOWED_EXTENSIONS = [
-    ".pdf",
-    ".txt",
-    ".docx",
-    ".xlsx",
-    ".dwg",
-    ".dxf",
-    ".jpg",
-    ".jpeg",
-    ".png",
+    ".pdf", ".txt", ".docx", ".xlsx", ".dwg",
+    ".dxf", ".jpg", ".jpeg", ".png",
 ]
 R2_OBJECT_PREFIX = "planos/"
 BASE_DIR = os.path.abspath(os.path.dirname(__file__)) # Para SQLite local
@@ -118,14 +110,6 @@ if not R2_ENDPOINT_URL and R2_ACCOUNT_ID:
 R2_CONFIG_MISSING = not all(
     [R2_BUCKET_NAME, R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY]
 )
-
-# ==============================================================================
-# == AÑADE ESTE BLOQUE EXACTAMENTE AQUÍ ==
-# --- Configuración de Dependencias Externas ---
-
-# ==============================================================================
-
-
 
 # ==============================================================================
 # 4. INICIALIZACIÓN DE EXTENSIONES Y SERVICIOS
@@ -178,16 +162,12 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50), nullable=False, default="consultor")
-    
-    # Aquí se guardarán las áreas permitidas como un string: "piping,mecanica,oocc"
     allowed_areas_str = db.Column(db.String(500), nullable=True)
 
     @property
     def allowed_areas(self):
-        """Devuelve una lista de las áreas permitidas para el usuario."""
         if not self.allowed_areas_str:
             return []
-        # Limpia espacios en blanco y devuelve la lista
         return [area.strip() for area in self.allowed_areas_str.split(",")]
 
     def set_password(self, password):
@@ -198,8 +178,6 @@ class User(UserMixin, db.Model):
 
     def __repr__(self):
         return f"<User {self.username} ({self.role})>"
-
-
 
 class Plano(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -213,8 +191,6 @@ class Plano(db.Model):
     idioma_documento = db.Column(db.String(10), nullable=True, default="spanish")
     tsvector_contenido = db.Column(TSVECTOR)
     disciplina = db.Column(db.String(100), nullable=True, index=True)
-    
-    # --- NUEVAS COLUMNAS AÑADIDAS ---
     sub_disciplina = db.Column(db.String(255), nullable=True)
     palabras_clave_ia = db.Column(db.Text, nullable=True)
 
@@ -226,7 +202,6 @@ class Plano(db.Model):
     def __repr__(self):
         return f"<Plano {self.codigo_plano} Rev: {self.revision}>"
 
-
 class TerminoPersonalizado(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     palabra = db.Column(db.String(100), unique=True, nullable=False)
@@ -234,19 +209,27 @@ class TerminoPersonalizado(db.Model):
     def __repr__(self):
         return f"<Termino: {self.palabra}>"
 
+class HistorialPreguntas(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    pregunta = db.Column(db.Text, nullable=False, unique=True, index=True)
+    respuesta = db.Column(db.Text, nullable=False)
+    fuentes = db.Column(JSONB) # Usamos JSONB para PostgreSQL, que es más eficiente
+    fecha_creacion = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    contador_uso = db.Column(db.Integer, default=1)
+
+    def __repr__(self):
+        return f"<PreguntaCacheada ID: {self.id}>"
 
 #=================================================
 # FUNCIONES DE IA
 #=================================================
-def generar_resumen_con_ia(texto_plano, idioma="spanish"): # El idioma detectado aún puede ser útil
+def generar_resumen_con_ia(texto_plano, idioma="spanish"):
     api_key = os.getenv("GOOGLE_API_KEY")
     if not texto_plano or not api_key or len(texto_plano.strip()) < 100:
         return "No se pudo generar un resumen automático."
 
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        
-        ## CAMBIO CLAVE: Se elimina la variable {idioma} y se escribe "español" directamente.
         prompt = f"""
         Actúas como un ingeniero de documentación técnica.
         El siguiente texto fue extraído de un plano de ingeniería.
@@ -269,45 +252,29 @@ def generar_resumen_con_ia(texto_plano, idioma="spanish"): # El idioma detectado
         return "Error al generar resumen."
 
 def extraer_datos_del_cajetin(pdf_stream):
-    """
-    Lee el área del cajetín de un PDF, intenta extraer con Regex y, si falla,
-    usa IA como fallback para los campos faltantes.
-    """
     datos_extraidos = {}
     texto_cajetin = ""
-    
     try:
         pdf_stream.seek(0)
         with pdfplumber.open(pdf_stream) as pdf:
             if not pdf.pages:
                 return datos_extraidos
-
             page = pdf.pages[0]
-            # Coordenadas del cajetín (ajustar si es necesario)
-            bbox = (
-                page.width * 0.40, page.height * 0.65,
-                page.width * 0.98, page.height * 0.98,
-            )
-            # Extraer texto del cajetín
+            bbox = (page.width * 0.40, page.height * 0.65, page.width * 0.98, page.height * 0.98)
             cropped_page = page.crop(bbox)
             texto_cajetin = cropped_page.extract_text(x_tolerance=2, y_tolerance=2) or ""
             datos_extraidos['texto_cajetin_bruto'] = texto_cajetin
-
-            # --- Intento 1: Extracción con Regex (como antes) ---
             patrones = {
                 "codigo_plano": [r"(?i)Doc\.\s*Code\s*&\s*Serial\s*No\.\s*([\w\-]+)", r"(K484-[\w\-]+)"],
                 "revision": [r"\(([a-zA-Z0-9]{1,2})\)", r"(?i)(?:Rev|Revision)\.?:?\s*([a-zA-Z0-9]{1,5})\b"],
                 "area": [r"\b(WSA|SWS|TQ|PIPING|MECANICA|OOCC|SERVICIOS)\b"],
             }
-            
             for clave, lista_regex in patrones.items():
                 for regex in lista_regex:
                     match = re.search(regex, texto_cajetin, re.IGNORECASE)
                     if match and match.group(1):
                         datos_extraidos[clave] = match.group(1).strip().upper()
-                        break 
-            
-            # --- Intento 2: Fallback con IA para campos faltantes ---
+                        break
             campos_faltantes = [k for k in patrones.keys() if k not in datos_extraidos]
             if campos_faltantes and texto_cajetin.strip() and os.getenv("GOOGLE_API_KEY"):
                 app.logger.info(f"Regex no encontró: {campos_faltantes}. Intentando con IA...")
@@ -317,7 +284,6 @@ def extraer_datos_del_cajetin(pdf_stream):
                     Analiza el siguiente texto de un cajetín de plano técnico y extrae los siguientes campos: {', '.join(campos_faltantes)}.
                     Responde únicamente con un objeto JSON con las claves solicitadas. Si no encuentras un valor, omite la clave.
                     Ejemplo de respuesta: {{"codigo_plano": "K484-M-DWG-001", "revision": "A"}}
-
                     Texto del cajetín:
                     ---
                     {texto_cajetin}
@@ -325,155 +291,80 @@ def extraer_datos_del_cajetin(pdf_stream):
                     JSON extraído:
                     """
                     response = model.generate_content(prompt_ia)
-                    # Limpiar y parsear la respuesta JSON de la IA
                     json_text = response.text.strip().lstrip("```json").rstrip("```")
                     datos_ia = json.loads(json_text)
-                    
                     app.logger.info(f"IA extrajo del cajetín: {datos_ia}")
-                    # Actualizar datos con lo que encontró la IA
                     for clave, valor in datos_ia.items():
                         if clave in campos_faltantes:
                             datos_extraidos[clave] = str(valor).strip().upper()
-
                 except Exception as e_ia:
                     app.logger.error(f"Error en el fallback de IA para el cajetín: {e_ia}")
-
     except Exception as e:
         app.logger.error(f"Error crítico extrayendo datos del cajetín: {e}")
-    
     finally:
-        pdf_stream.seek(0) # Siempre rebobinar el stream
-
+        pdf_stream.seek(0)
     return datos_extraidos
 
-# Reemplaza la antigua función de IA por esta en app.py
-
 def analizar_contenido_con_ia(texto_plano):
-    """
-    Usa la API de Google Gemini para extraer un informe estructurado del texto de un plano.
-    Devuelve un diccionario con disciplina, sub-disciplina, palabras clave y un resumen.
-    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not texto_plano or not api_key:
         return None
-
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        
         categorias = "Mecánico, Eléctrico, Piping, Instrumentación, Civil, Estructural, Arquitectura, Proceso, General"
-        
         prompt = f"""
         Actúas como un ingeniero de proyectos experto en clasificación de documentos técnicos.
         Analiza el siguiente texto extraído de un plano y devuelve tu análisis en un formato JSON estricto.
-
         El objeto JSON debe tener las siguientes claves:
         1. "disciplina": UNA SOLA categoría de la siguiente lista: [{categorias}].
         2. "sub_disciplina": Una categoría más específica que identifiques (ej: "HVAC", "Fundaciones", "Tuberías de alta presión"). Si no estás seguro, pon "N/A".
         3. "palabras_clave": Un array de Python con 3 a 5 palabras o frases cortas clave del texto que justifican tu elección.
         4. "resumen_corto": Un resumen técnico de una sola frase describiendo el propósito principal del plano.
-
         Texto a analizar:
         ---
         {texto_plano[:4000]}
         ---
-
         Responde únicamente con el objeto JSON, sin añadir texto adicional antes o después.
         """
-        
         response = model.generate_content(prompt)
-        
-        # Limpiar la respuesta para asegurarnos de que es un JSON válido
         cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
-        
-        # Parsear la respuesta JSON
         analysis_result = json.loads(cleaned_response)
-        
-        # Validar que el diccionario tiene las claves esperadas
         required_keys = ["disciplina", "sub_disciplina", "palabras_clave", "resumen_corto"]
         if all(key in analysis_result for key in required_keys):
             return analysis_result
         else:
             app.logger.error("La respuesta JSON de la IA no contenía todas las claves requeridas.")
             return None
-
     except Exception as e:
         app.logger.error(f"Error en la API de Gemini o al procesar JSON: {e}")
         return None
-
-
 
 # ==============================================================================
 # 6. FUNCIONES DE UTILIDAD Y AUXILIARES
 # ==============================================================================
 
-
 def extraer_codigos_tecnicos(texto):
-    """
-    Usa regex para encontrar posibles códigos técnicos en una pregunta.
-    Ej: PD4, SPC-FW02, K484-0001-..., etc.
-    """
-    # Patrón para encontrar palabras en mayúsculas con números, o códigos con guiones.
     patron = r'\b([A-Z0-9]+-[A-Z0-9\-]+|[A-Z]{2,}-\d+|\b[A-Z]+\d+\b)'
     codigos = re.findall(patron, texto.upper())
     return codigos
 
-
 @app.template_filter('local_time')
 def format_datetime_local(utc_dt):
-    """Convierte una fecha UTC a la zona horaria de Chile."""
     if not utc_dt:
         return ""
     try:
-        # Define la zona horaria de Chile
         local_tz = pytz.timezone('America/Santiago')
-        # Convierte la fecha de la base de datos a la hora local
         local_dt = utc_dt.astimezone(local_tz)
-        # Devuelve la fecha formateada
         return local_dt.strftime('%Y-%m-%d %H:%M')
     except Exception as e:
         app.logger.error(f"Error al convertir la zona horaria: {e}")
-        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
-
-@app.template_filter('local_time')
-def format_datetime_local(utc_dt):
-    """Convierte una fecha UTC a la zona horaria de Chile."""
-    if not utc_dt:
-        return ""
-    try:
-        # Define la zona horaria de Chile
-        local_tz = pytz.timezone('America/Santiago')
-        # Convierte la fecha de la base de datos a la hora local
-        local_dt = utc_dt.astimezone(local_tz)
-        # Devuelve la fecha formateada
-        return local_dt.strftime('%Y-%m-%d %H:%M')
-    except Exception as e:
-        app.logger.error(f"Error al convertir la zona horaria: {e}")
-        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
-
-@app.template_filter('local_time')
-def format_datetime_local(utc_dt):
-    """Convierte una fecha UTC a la zona horaria de Chile."""
-    if not utc_dt:
-        return ""
-    try:
-        # Define la zona horaria de Chile
-        local_tz = pytz.timezone('America/Santiago')
-        # Convierte la fecha de la base de datos a la hora local
-        local_dt = utc_dt.astimezone(local_tz)
-        # Devuelve la fecha formateada
-        return local_dt.strftime('%Y-%m-%d %H:%M')
-    except Exception as e:
-        app.logger.error(f"Error al convertir la zona horaria: {e}")
-        return utc_dt.strftime('%Y-%m-%d %H:%M') # Si falla, muestra la hora UTC
-
+        return utc_dt.strftime('%Y-%m-%d %H:%M')
 
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
 
-
 def get_s3_client():
-    """Crea y devuelve un cliente de Boto3 para S3/R2."""
     if R2_CONFIG_MISSING:
         app.logger.error("Faltan variables de configuración para R2. No se puede crear el cliente S3.")
         return None
@@ -491,30 +382,22 @@ def get_s3_client():
         app.logger.error(f"Error al crear el cliente S3 para R2: {e}", exc_info=True)
         return None
 
-
 def clean_for_path(text):
-    """Limpia un texto para ser usado en nombres de archivo o rutas."""
     if not text:
         return "sin_especificar"
     text = re.sub(r"[^\w\s-]", "", text).strip()
     text = re.sub(r"[-\s]+", "_", text)
     return text if text else "sin_especificar"
 
-
 def es_revision_mas_nueva(rev_nueva_str, rev_vieja_str):
-    """Compara dos strings de revisión para determinar si la primera es más nueva."""
     if rev_nueva_str is None or rev_vieja_str is None:
         return False
-
     rev_nueva_str_clean = str(rev_nueva_str).strip().upper()
     rev_vieja_str_clean = str(rev_vieja_str).strip().upper()
-
     if not rev_nueva_str_clean or not rev_vieja_str_clean:
         return rev_nueva_str_clean > rev_vieja_str_clean
-
     if rev_nueva_str_clean == rev_vieja_str_clean:
         return False
-
     try:
         return parse_version(rev_nueva_str_clean) > parse_version(rev_vieja_str_clean)
     except InvalidVersion:
@@ -523,17 +406,14 @@ def es_revision_mas_nueva(rev_nueva_str, rev_vieja_str):
         )
         return rev_nueva_str_clean > rev_vieja_str_clean
 
-
 def extraer_revision_del_filename(filename):
     if not filename:
         return None
-
     patrones_revision = [
         r"[_-]REV[._\s-]?([a-zA-Z0-9]{1,5})(?:[._\s-]|(?=\.[^.]*$)|$)",
         r"[_-]R_?([a-zA-Z0-9]{1,5})(?:[._\s-]|(?=\.[^.]*$)|$)",
         r"\(R(?:EV)?\.?[_\s-]?([a-zA-Z0-9]{1,5})\)",
         r"\bRev\.?\s*([a-zA-Z0-9]{1,5})\b",
-        # LÍNEAS CORREGIDAS: La lógica está dentro de .format()
         r"_([a-zA-Z0-9]{{1,5}})(?:_|\.(?:{}))$".format(
             "|".join(ext.lstrip('.') for ext in ALLOWED_EXTENSIONS)
         ),
@@ -541,7 +421,6 @@ def extraer_revision_del_filename(filename):
             "|".join(ext.lstrip('.') for ext in ALLOWED_EXTENSIONS)
         )
     ]
-
     app.logger.debug(f"Intentando extraer revisión del nombre de archivo: '{filename}'")
     for patron in patrones_revision:
         match = re.search(patron, filename, re.IGNORECASE)
@@ -552,22 +431,16 @@ def extraer_revision_del_filename(filename):
                 return revision_extraida
             else:
                 app.logger.debug(f"Extracción '{revision_extraida}' no pasó el patrón de validación.")
-
     app.logger.info(f"No se pudo extraer una revisión válida del nombre de archivo: '{filename}'")
     return None
 
-
-
 def extraer_texto_del_archivo(file_stream, filename_with_ext):
-    """Extrae texto de archivos PDF, TXT o DOCX y detecta su idioma."""
     _root, ext = os.path.splitext(filename_with_ext)
     ext = ext.lower()
     texto_extraido = ""
-    idioma_detectado = "spanish"  # Default
-
+    idioma_detectado = "spanish"
     if hasattr(file_stream, "seek"):
         file_stream.seek(0)
-
     try:
         if ext == ".pdf":
             with pdfplumber.open(file_stream) as pdf:
@@ -597,10 +470,8 @@ def extraer_texto_del_archivo(file_stream, filename_with_ext):
             app.logger.info(f"Extracción de texto no soportada para la extensión: {ext}")
     except Exception as e:
         app.logger.error(f"Error extrayendo texto de '{filename_with_ext}': {e}")
-
     if hasattr(file_stream, "seek"):
         file_stream.seek(0)
-
     if texto_extraido.strip():
         try:
             lang_code = lang_detect_func(texto_extraido[:2000])
@@ -608,12 +479,9 @@ def extraer_texto_del_archivo(file_stream, filename_with_ext):
             app.logger.info(f"Idioma detectado para '{filename_with_ext}': {lang_code} -> {idioma_detectado}")
         except LangDetectException:
             app.logger.warning(f"No se pudo detectar idioma para '{filename_with_ext}', asumiendo '{idioma_detectado}'.")
-    
     return texto_extraido, idioma_detectado
 
-
 def lematizar_texto(texto, nlp_model, idioma_codigo_spacy):
-    """Lematiza un texto usando un modelo de spaCy."""
     if not nlp_model or not texto:
         return texto
     doc = nlp_model(texto.lower())
@@ -624,9 +492,7 @@ def lematizar_texto(texto, nlp_model, idioma_codigo_spacy):
     ]
     return " ".join(lemmas) if lemmas else texto
 
-
 def actualizar_tsvector_plano(plano_id_val, codigo_plano_val, area_val, descripcion_val, contenido_archivo_val, idioma_doc="spanish"):
-    """Actualiza el campo tsvector para la búsqueda de texto completo."""
     try:
         texto_para_indexar = " ".join(
             filter(None, [codigo_plano_val, area_val, descripcion_val, contenido_archivo_val])
@@ -642,123 +508,72 @@ def actualizar_tsvector_plano(plano_id_val, codigo_plano_val, area_val, descripc
         )
         db.session.execute(stmt_tsvector)
     except Exception as e:
-        app.logger.error(
-            f"Error actualizando tsvector/idioma para plano_id {plano_id_val}: {e}",
-            exc_info=True,
-        )
+        app.logger.error(f"Error actualizando tsvector/idioma para plano_id {plano_id_val}: {e}", exc_info=True)
         raise
 
 def determinar_area_por_regla(texto_plano):
-    """Aplica reglas numéricas para determinar el área a partir de un texto."""
     if not texto_plano:
         return None
-    
-    # Usamos "in" para ver si el número está en cualquier parte del texto del cajetín
     if "3800" in texto_plano or "3890" in texto_plano:
         app.logger.info("Regla numérica aplicada: Se encontró 3800/3890. Área asignada: wsa")
         return "wsa"
-    
     if "3900" in texto_plano or "3990" in texto_plano:
         app.logger.info("Regla numérica aplicada: Se encontró 3900/3990. Área asignada: sws")
         return "sws"
-        
     return None
 
-# Reemplaza la función existente con esta versión de DIAGNÓSTICO en app.py
-
 def parsear_nombre_de_archivo(filename):
-    """
-    Versión de diagnóstico para entender cómo se procesan los nombres de archivo.
-    """
-    # Usamos print() porque se verá directamente en tu consola negra de Flask
-    print("--- INICIANDO PARSER DE NOMBRE DE ARCHIVO ---")
-    print(f"FILENAME RECIBIDO: {filename}")
-    
+    print(f"--- INICIANDO PARSER DE NOMBRE DE ARCHIVO ---\nFILENAME RECIBIDO: {filename}")
     if not filename:
         print("-> RESULTADO: Error, el nombre de archivo está vacío.")
         return {'codigo': None, 'revision': None}
-    
     try:
         base, _ = os.path.splitext(filename)
         parts = base.split('_')
-        
-        print(f"-> Partes divididas por '_': {parts}")
-        print(f"-> Número de partes: {len(parts)}")
-        
+        print(f"-> Partes divididas por '_': {parts}\n-> Número de partes: {len(parts)}")
         if len(parts) < 2:
             print("-> RESULTADO: No hay suficientes partes para determinar código y revisión.")
             return {'codigo': None, 'revision': None}
-
-        # Lógica para determinar código y revisión
         if len(parts) == 2:
-            codigo = parts[0]
-            revision = parts[1]
+            codigo, revision = parts[0], parts[1]
             print("-> LÓGICA APLICADA: Caso para 2 partes (ej: CODIGO_REV.pdf)")
-        else: # Si hay 3 o más partes
-            revision = parts[-2]
-            codigo = '_'.join(parts[:-2])
+        else:
+            revision, codigo = parts[-2], '_'.join(parts[:-2])
             print("-> LÓGICA APLICADA: Caso para 3+ partes (ej: CODIGO_REV_META.pdf)")
-
-        print(f"-> CÓDIGO CANDIDATO: '{codigo}'")
-        print(f"-> REVISIÓN CANDIDATA: '{revision}'")
-
-        # Validación final de la revisión
+        print(f"-> CÓDIGO CANDIDATO: '{codigo}'\n-> REVISIÓN CANDIDATA: '{revision}'")
         if 1 <= len(revision) <= 5 and revision.strip() and revision.isalnum():
-            print("-> RESULTADO: La revisión parece válida. Éxito.")
-            print("-------------------------------------------------")
+            print("-> RESULTADO: La revisión parece válida. Éxito.\n-------------------------------------------------")
             return {'codigo': codigo.strip(), 'revision': revision.strip().upper()}
         else:
-            print("-> RESULTADO: La revisión candidata no pasó la validación (no es alfanumérica o tiene longitud incorrecta).")
-            print("-------------------------------------------------")
+            print("-> RESULTADO: La revisión candidata no pasó la validación.\n-------------------------------------------------")
             return {'codigo': None, 'revision': None}
-
     except Exception as e:
-        print(f"-> ERROR INESPERADO: {e}")
-        print("-------------------------------------------------")
+        print(f"-> ERROR INESPERADO: {e}\n-------------------------------------------------")
         return {'codigo': None, 'revision': None}
 
 def elegir_mejor_revision(rev_cajetin, rev_filename):
-    """
-    Compara dos revisiones candidatas y devuelve la más probable.
-    """
-    # Limpiar entradas
     r_c = rev_cajetin.strip().upper() if rev_cajetin else None
     r_f = rev_filename.strip().upper() if rev_filename else None
-
-    # Casos simples
     if not r_c and not r_f: return None
     if not r_c: return r_f
     if not r_f: return r_c
     if r_c == r_f: return r_c
-
-    # --- Reglas de Prioridad ---
-    # 1. Los números tienen máxima prioridad.
     es_cajetin_numero = r_c.isdigit()
     es_filename_numero = r_f.isdigit()
-
-    if es_cajetin_numero and not es_filename_numero:
-        return r_c
-    if es_filename_numero and not es_cajetin_numero:
-        return r_f
-
-    # 2. Las revisiones muy cortas (1-2 caracteres) tienen prioridad sobre las más largas.
-    if len(r_c) <= 2 and len(r_f) > 2:
-        return r_c
-    if len(r_f) <= 2 and len(r_c) > 2:
-        return r_f
-    
-    # 3. Como última opción, el nombre de archivo suele ser más fiable.
+    if es_cajetin_numero and not es_filename_numero: return r_c
+    if es_filename_numero and not es_cajetin_numero: return r_f
+    if len(r_c) <= 2 and len(r_f) > 2: return r_c
+    if len(r_f) <= 2 and len(r_c) > 2: return r_f
     app.logger.info(f"Ambas revisiones ('{r_c}', '{r_f}') son ambiguas. Se prefiere la del nombre de archivo.")
     return r_f
 
+# ==============================================================================
 # 7. PROCESADORES DE CONTEXTO DE FLASK
 # ==============================================================================
 
 @app.context_processor
 def inject_current_year():
-    """Inyecta el año actual en todas las plantillas para el footer."""
     return {"current_year": datetime.now(timezone.utc).year}
-
 
 # ==============================================================================
 # 8. RUTAS DE LA APLICACIÓN (VISTAS)
@@ -784,14 +599,12 @@ def login():
             flash("Usuario o contraseña incorrectos.", "danger")
     return render_template("login.html")
 
-
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
     flash("Has cerrado sesión.", "info")
     return redirect(url_for("login"))
-
 
 # ----------------------------------------
 # Rutas Principales
@@ -805,13 +618,9 @@ def index():
         )
     return render_template("index.html")
 
-# ==============================================================================
-# == RUTA DE SUBIDA COMPLETA Y OPTIMIZADA PARA MEMORIA (STREAMING) ==
-# ==============================================================================
 @app.route("/upload", methods=["GET", "POST"])
 @login_required
 def upload_pdf():
-    # --- Verificaciones iniciales (sin cambios) ---
     if request.method == "GET":
         if current_user.role not in ["admin", "cargador"]:
             flash("No tienes permiso para ver esta página.", "danger")
@@ -826,61 +635,44 @@ def upload_pdf():
         return jsonify({'status': 'error', 'message': 'No se recibió ningún archivo.'}), 400
 
     original_filename = secure_filename(file_obj.filename)
-    temp_file_path = None  # Inicializamos la variable de la ruta temporal
-
+    temp_file_path = None
     try:
-        # --- 1. Guardar el archivo subido en un archivo temporal en disco ---
-        # Esto evita cargar el archivo completo en la memoria RAM.
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_f:
             temp_file_path = temp_f.name
             shutil.copyfileobj(file_obj.stream, temp_f)
-        
         app.logger.info(f"Archivo '{original_filename}' guardado temporalmente en '{temp_file_path}'")
 
-        # --- 2. Extraer metadatos desde el archivo temporal ---
-        # Todas las lecturas ahora usan el archivo en disco, manteniendo la RAM baja.
         with open(temp_file_path, "rb") as f:
             datos_cajetin = extraer_datos_del_cajetin(f)
         
         texto_cajetin_bruto = datos_cajetin.get('texto_cajetin_bruto', '')
         info_filename = parsear_nombre_de_archivo(original_filename)
 
-        # --- 3. Lógica de asignación de metadatos (tu código original) ---
-        codigo_plano_final = None
-        revision_final = None
-
         codigo_desde_cajetin = datos_cajetin.get('codigo_plano')
         codigo_desde_filename = info_filename.get('codigo')
         PALABRAS_INVALIDAS = ["PAGE", "VIEW", "IEW", "DWG", "DRAWING", "PLANO"]
-
         if codigo_desde_cajetin and codigo_desde_cajetin.upper() not in PALABRAS_INVALIDAS and len(codigo_desde_cajetin) > 4:
             codigo_plano_final = codigo_desde_cajetin
         else:
             codigo_plano_final = codigo_desde_filename
-
-        revision_final = elegir_mejor_revision(
-            datos_cajetin.get('revision'),
-            info_filename.get('revision')
-        )
+        
+        revision_final = elegir_mejor_revision(datos_cajetin.get('revision'), info_filename.get('revision'))
         
         if not codigo_plano_final:
             codigo_plano_final = os.path.splitext(original_filename)[0]
         if not revision_final:
-            msg = f"No se pudo determinar una REVISIÓN válida para el archivo."
+            msg = "No se pudo determinar una REVISIÓN válida para el archivo."
             return jsonify({'status': 'error', 'message': msg}), 400
 
-        # --- 4. Lógica de asignación de área y permisos (tu código original) ---
         area_detectada = datos_cajetin.get("area") or determinar_area_por_regla(texto_cajetin_bruto)
         area_final = "sin_clasificar"
         mensaje_adicional = ""
-
         if current_user.role == 'admin':
             area_final = area_detectada or "sin_clasificar"
         elif current_user.role == 'cargador':
             user_allowed_areas = current_user.allowed_areas
             if not user_allowed_areas:
                 return jsonify({'status': 'error', 'message': 'Tu cuenta de cargador no tiene áreas asignadas.'}), 403
-            
             if area_detectada and area_detectada.lower() in [a.lower() for a in user_allowed_areas]:
                 area_final = area_detectada
             else:
@@ -890,7 +682,6 @@ def upload_pdf():
                 else:
                     mensaje_adicional = f"Archivo asignado a tu área por defecto: '{area_final}'."
         
-        # --- 5. Verificación de duplicados y limpieza de versiones antiguas (tu código original) ---
         planos_con_mismo_codigo = Plano.query.filter_by(codigo_plano=codigo_plano_final).all()
         for p_existente in planos_con_mismo_codigo:
             if p_existente.revision == revision_final:
@@ -907,21 +698,17 @@ def upload_pdf():
                 s3.delete_object(Bucket=R2_BUCKET_NAME, Key=p_antiguo.r2_object_key)
             db.session.delete(p_antiguo)
         
-        # --- 6. Subida a R2 y procesamiento de IA desde el archivo temporal ---
         cleaned_area = clean_for_path(area_final)
         r2_object_key_nuevo = f"{R2_OBJECT_PREFIX}{cleaned_area}/{original_filename}"
 
-        # Subimos el archivo a R2 desde el archivo en disco, no desde la memoria.
         with open(temp_file_path, "rb") as f:
             s3.upload_fileobj(f, R2_BUCKET_NAME, r2_object_key_nuevo, ExtraArgs={'ContentType': 'application/pdf'})
         app.logger.info(f"Archivo subido a R2 con la clave: {r2_object_key_nuevo}")
         
-        # Extraemos texto para la IA, también desde el archivo en disco.
         with open(temp_file_path, "rb") as f:
             texto_contenido, idioma = extraer_texto_del_archivo(f, original_filename)
         
         informe_ia = analizar_contenido_con_ia(texto_contenido)
-        
         disciplina_final, sub_disciplina_final, palabras_clave_final, resumen_final = "Sin clasificar", None, None, ""
         if informe_ia:
             disciplina_final = informe_ia.get("disciplina", "Sin clasificar")
@@ -929,24 +716,17 @@ def upload_pdf():
             palabras_clave_final = ", ".join(informe_ia.get("palabras_clave", []))
             resumen_final = informe_ia.get("resumen_corto")
 
-        # --- 7. Guardado en la base de datos (tu código original) ---
         nuevo_plano = Plano(
-            codigo_plano=codigo_plano_final,
-            revision=revision_final,
-            area=area_final,
-            nombre_archivo_original=original_filename,
-            r2_object_key=r2_object_key_nuevo,
-            idioma_documento=idioma,
-            disciplina=disciplina_final,
-            sub_disciplina=sub_disciplina_final,
-            palabras_clave_ia=palabras_clave_final,
-            descripcion=resumen_final
+            codigo_plano=codigo_plano_final, revision=revision_final, area=area_final,
+            nombre_archivo_original=original_filename, r2_object_key=r2_object_key_nuevo,
+            idioma_documento=idioma, disciplina=disciplina_final, sub_disciplina=sub_disciplina_final,
+            palabras_clave_ia=palabras_clave_final, descripcion=resumen_final
         )
         db.session.add(nuevo_plano)
         db.session.flush()
         
         actualizar_tsvector_plano(
-            nuevo_plano.id, nuevo_plano.codigo_plano, nuevo_plano.area, 
+            nuevo_plano.id, nuevo_plano.codigo_plano, nuevo_plano.area,
             nuevo_plano.descripcion, texto_contenido, idioma
         )
         db.session.commit()
@@ -954,17 +734,13 @@ def upload_pdf():
         success_message = f"Archivo '{original_filename}' subido y procesado exitosamente."
         if mensaje_adicional:
             success_message += f" {mensaje_adicional}"
-        
         return jsonify({'status': 'success', 'message': success_message}), 200
 
     except Exception as e:
         db.session.rollback()
         app.logger.error(f"Error en subida de archivo: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'Ocurrió un error interno en el servidor: {e}'}), 500
-
     finally:
-        # --- 8. Limpieza del archivo temporal ---
-        # Este bloque se ejecuta siempre, incluso si hay un error, para no dejar basura en el disco.
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
             app.logger.info(f"Archivo temporal '{temp_file_path}' eliminado.")
@@ -978,15 +754,12 @@ def list_pdfs():
         query_contenido_original = request.args.get("q_contenido", "").strip()
         query_nombre_archivo = request.args.get("q_nombre_archivo", "").strip()
         query_disciplina = request.args.get("q_disciplina", "")
-
         base_query = Plano.query
-
         if current_user.role != "admin":
             user_allowed_areas = current_user.allowed_areas
             if not user_allowed_areas:
                 return render_template("list_pdfs.html", planos=[])
             base_query = base_query.filter(Plano.area.in_(user_allowed_areas))
-
         final_query = base_query
         if query_codigo:
             final_query = final_query.filter(Plano.codigo_plano.ilike(f"%{query_codigo}%"))
@@ -999,17 +772,13 @@ def list_pdfs():
                 final_query = final_query.filter(Plano.area.ilike(f"%{query_area}%"))
         if query_nombre_archivo:
             final_query = final_query.filter(Plano.nombre_archivo_original.ilike(f"%{query_nombre_archivo}%"))
-
         if query_contenido_original and app.config["SQLALCHEMY_DATABASE_URI"].startswith("postgresql"):
             palabras = query_contenido_original.split()
             termino_corregido = " ".join([spell.correction(palabra) or palabra for palabra in palabras])
-
             if termino_corregido.lower() != query_contenido_original.lower():
                 flash(f"Mostrando resultados para: '{termino_corregido}'", "info")
-
             query_a_procesar = termino_corregido
             ids_fts_encontrados = set()
-
             termino_es = lematizar_texto(query_a_procesar, NLP_ES, "español")
             if termino_es.strip():
                 query_es_fts = final_query.filter(
@@ -1017,7 +786,6 @@ def list_pdfs():
                 ).with_entities(Plano.id).all()
                 for pid, in query_es_fts:
                     ids_fts_encontrados.add(pid)
-
             termino_traducido_en = query_a_procesar
             try:
                 if len(query_a_procesar) > 2 and not query_a_procesar.isnumeric():
@@ -1026,7 +794,6 @@ def list_pdfs():
                         termino_traducido_en = traduccion
             except Exception as e:
                 app.logger.error(f"Fallo en API de traducción: {e}")
-
             termino_en = lematizar_texto(termino_traducido_en, NLP_EN, "inglés")
             if termino_en.strip():
                 query_en_fts = final_query.filter(
@@ -1035,19 +802,15 @@ def list_pdfs():
                 ).with_entities(Plano.id).all()
                 for pid, in query_en_fts:
                     ids_fts_encontrados.add(pid)
-
             if ids_fts_encontrados:
                 final_query = final_query.filter(Plano.id.in_(list(ids_fts_encontrados)))
             else:
                 final_query = final_query.filter(db.false())
-
         planos_db = final_query.order_by(Plano.area.desc(), Plano.codigo_plano.desc()).all()
-
     except Exception as e:
         flash(f"Error al obtener la lista de planos: {str(e)}", "danger")
         app.logger.error(f"Error en ruta /pdfs: {e}", exc_info=True)
         planos_db = []
-
     return render_template(
         "list_pdfs.html",
         planos=planos_db,
@@ -1056,102 +819,73 @@ def list_pdfs():
         R2_BUCKET_NAME=R2_BUCKET_NAME,
     )
 
-
 @app.route("/plano/edit/<int:plano_id>", methods=["GET", "POST"])
 @login_required
 def edit_plano(plano_id):
     if current_user.role not in ["admin", "cargador"]:
         flash("No tienes permiso para editar planos.", "danger")
         return redirect(url_for("list_pdfs"))
-
     plano_a_editar = Plano.query.get_or_404(plano_id)
     s3 = get_s3_client()
-
     if request.method == "POST":
         try:
             nueva_revision_form = request.form.get("revision", "").strip()
             nueva_area_form = request.form.get("area", "").strip()
             nueva_descripcion_form = request.form.get("descripcion", "").strip()
             file_obj_edit = request.files.get("file_to_edit")
-
             if not nueva_revision_form or not nueva_area_form:
                 flash("Los campos Revisión y Área son obligatorios.", "warning")
                 return render_template("edit_plano.html", plano=plano_a_editar)
-            
             if not re.match(VALID_REVISION_PATTERN, nueva_revision_form):
                 flash(REVISION_FORMAT_ERROR_MSG, "danger")
                 return render_template("edit_plano.html", plano=plano_a_editar)
-
             antigua_r2_object_key = plano_a_editar.r2_object_key
             _, current_ext = os.path.splitext(plano_a_editar.nombre_archivo_original)
             nueva_ext = current_ext.lower()
             nuevo_nombre_original = plano_a_editar.nombre_archivo_original
-
             if file_obj_edit and file_obj_edit.filename:
                 nuevo_nombre_original = secure_filename(file_obj_edit.filename)
                 _, nueva_ext = os.path.splitext(nuevo_nombre_original)
                 if nueva_ext.lower() not in ALLOWED_EXTENSIONS:
                     flash(f"Formato de archivo no permitido: '{nueva_ext}'.", "warning")
                     return render_template("edit_plano.html", plano=plano_a_editar)
-            
             nueva_r2_object_key = f"{R2_OBJECT_PREFIX}{clean_for_path(nueva_area_form)}/{clean_for_path(plano_a_editar.codigo_plano)}_Rev{clean_for_path(nueva_revision_form)}{nueva_ext}"
-
-            # Validar conflictos de revisión y R2 key
-            # (El código de validación original es correcto y se mantiene implícitamente aquí)
-
-            # Actualizar metadatos del plano
             plano_a_editar.revision = nueva_revision_form
             plano_a_editar.area = nueva_area_form
             plano_a_editar.descripcion = nueva_descripcion_form
             plano_a_editar.fecha_subida = datetime.now(timezone.utc)
-            
             texto_contenido_fts = ""
             idioma_doc_fts = plano_a_editar.idioma_documento
-
             if file_obj_edit and file_obj_edit.filename:
-                # Reemplazar archivo en R2
                 s3.upload_fileobj(file_obj_edit.stream, R2_BUCKET_NAME, nueva_r2_object_key)
                 if antigua_r2_object_key and antigua_r2_object_key != nueva_r2_object_key:
                     s3.delete_object(Bucket=R2_BUCKET_NAME, Key=antigua_r2_object_key)
-                
                 plano_a_editar.nombre_archivo_original = nuevo_nombre_original
                 plano_a_editar.r2_object_key = nueva_r2_object_key
                 texto_contenido_fts, idioma_doc_fts = extraer_texto_del_archivo(file_obj_edit.stream, nuevo_nombre_original)
                 plano_a_editar.idioma_documento = idioma_doc_fts
-            
             elif nueva_r2_object_key != antigua_r2_object_key:
-                # Mover archivo en R2 si solo cambiaron metadatos
                 copy_source = {"Bucket": R2_BUCKET_NAME, "Key": antigua_r2_object_key}
                 s3.copy_object(Bucket=R2_BUCKET_NAME, Key=nueva_r2_object_key, CopySource=copy_source)
                 s3.delete_object(Bucket=R2_BUCKET_NAME, Key=antigua_r2_object_key)
                 plano_a_editar.r2_object_key = nueva_r2_object_key
-            
-            # Re-extraer texto si no se subió archivo nuevo
             if not (file_obj_edit and file_obj_edit.filename) and s3:
                 response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano_a_editar.r2_object_key)
                 file_bytes = response["Body"].read()
                 texto_contenido_fts, _ = extraer_texto_del_archivo(io.BytesIO(file_bytes), plano_a_editar.nombre_archivo_original)
-
             actualizar_tsvector_plano(
-                plano_id_val=plano_a_editar.id,
-                codigo_plano_val=plano_a_editar.codigo_plano,
-                area_val=plano_a_editar.area,
-                descripcion_val=plano_a_editar.descripcion,
-                contenido_archivo_val=texto_contenido_fts,
-                idioma_doc=idioma_doc_fts,
+                plano_id_val=plano_a_editar.id, codigo_plano_val=plano_a_editar.codigo_plano,
+                area_val=plano_a_editar.area, descripcion_val=plano_a_editar.descripcion,
+                contenido_archivo_val=texto_contenido_fts, idioma_doc=idioma_doc_fts,
             )
-
             db.session.commit()
             flash(f"Plano '{plano_a_editar.codigo_plano}' actualizado.", "success")
             return redirect(url_for("list_pdfs"))
-        
         except Exception as e:
             db.session.rollback()
             flash(f"Error general al actualizar el plano: {str(e)}", "danger")
             app.logger.error(f"Error editando plano ID {plano_id}: {e}", exc_info=True)
-
     return render_template("edit_plano.html", plano=plano_a_editar)
-
 
 @app.route("/files/view/<path:object_key>")
 @login_required
@@ -1167,13 +901,12 @@ def view_file(object_key):
         presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": R2_BUCKET_NAME, "Key": object_key},
-            ExpiresIn=3600,  # 1 hora
+            ExpiresIn=3600,
         )
         return redirect(presigned_url)
     except Exception as e:
         flash(f"Error al generar enlace para el archivo: {str(e)}", "danger")
         return redirect(url_for("list_pdfs"))
-
 
 @app.route("/files/delete/<int:plano_id>", methods=["POST"])
 @login_required
@@ -1184,13 +917,11 @@ def delete_file(plano_id):
     if R2_CONFIG_MISSING:
         flash("Eliminación deshabilitada: Faltan configuraciones de R2.", "danger")
         return redirect(url_for("list_pdfs"))
-
     plano_a_eliminar = Plano.query.get_or_404(plano_id)
     s3 = get_s3_client()
     if not s3:
         flash("Error en la configuración de R2.", "danger")
         return redirect(url_for("list_pdfs"))
-
     try:
         if plano_a_eliminar.r2_object_key:
             s3.delete_object(Bucket=R2_BUCKET_NAME, Key=plano_a_eliminar.r2_object_key)
@@ -1201,7 +932,6 @@ def delete_file(plano_id):
         db.session.rollback()
         flash(f"Error al eliminar el plano: {str(e)}", "danger")
     return redirect(url_for("list_pdfs"))
-
 
 @app.route("/medidor/plano/<path:object_key>")
 @login_required
@@ -1234,42 +964,49 @@ def visor_medidor_pdf(object_key):
         flash(f"Error al preparar el visor de medición: {str(e)}", "danger")
         return redirect(request.referrer or url_for("list_pdfs"))
 
-
 @app.route("/ask", methods=["GET"])
 @login_required
 def ask_page():
-    """Muestra la página de búsqueda conversacional."""
-    # Simplemente renderiza la plantilla del chat.
     return render_template("ask.html")
 
-
 # =================================================================================
-# == RUTA /api/ask-gemini VERSIÓN FINAL (MÁS ROBUSTA CONTRA ERRORES) ==
+# == RUTA /api/ask-gemini CON LÓGICA DE CACHÉ INTEGRADA ==
 # =================================================================================
 @app.route("/api/ask-gemini", methods=["POST"])
 @login_required
 def api_ask_gemini():
-    # --- 1. Obtención de datos de la solicitud ---
-    pregunta = request.json.get("question")
-    historial = request.json.get("history", []) 
+    pregunta = request.json.get("question", "").strip()
+    historial = request.json.get("history", [])
 
     if not pregunta:
         return jsonify({"error": "No se proporcionó ninguna pregunta."}), 400
     if not os.getenv("GOOGLE_API_KEY"):
         return jsonify({"error": "La función de búsqueda conversacional no está configurada."}), 503
 
+    # --- PASO 1: REVISAR EL CACHÉ PRIMERO ---
     try:
-        app.logger.info(f"Iniciando búsqueda híbrida para: '{pregunta}'")
-        app.logger.info(f"Historial de conversación recibido: {len(historial)} turnos.")
+        pregunta_cacheada = HistorialPreguntas.query.filter_by(pregunta=pregunta).first()
+        if pregunta_cacheada:
+            app.logger.info(f"¡Cache HIT! Devolviendo respuesta guardada para: '{pregunta}'")
+            pregunta_cacheada.contador_uso += 1
+            db.session.commit()
+            return jsonify({
+                "answer": pregunta_cacheada.respuesta,
+                "sources": pregunta_cacheada.fuentes,
+                "cached": True
+            })
+    except Exception as e_cache_lookup:
+        app.logger.error(f"Error al buscar en el caché: {e_cache_lookup}")
 
-        # --- 2. Búsqueda y recuperación de documentos ---
+    app.logger.info(f"Cache MISS. Procesando nueva pregunta con IA: '{pregunta}'")
+    
+    # --- PASO 2: SI NO ESTÁ EN CACHÉ, EJECUTAR LA LÓGICA NORMAL ---
+    try:
         codigos_extraidos = extraer_codigos_tecnicos(pregunta)
         texto_natural = re.sub(r'\s*'.join(map(re.escape, codigos_extraidos)), '', pregunta, flags=re.IGNORECASE) if codigos_extraidos else pregunta
         terminos_lematizados = lematizar_texto(texto_natural, NLP_ES, "español").split()
-
         base_query = Plano.query
         search_conditions = []
-
         if terminos_lematizados or codigos_extraidos:
             query_parts = []
             if codigos_extraidos: query_parts.append(" & ".join(codigos_extraidos))
@@ -1280,25 +1017,19 @@ def api_ask_gemini():
         if codigos_extraidos:
             for codigo in codigos_extraidos:
                 search_conditions.append(or_(Plano.descripcion.ilike(f'%{codigo}%'), Plano.codigo_plano.ilike(f'%{codigo}%')))
-
         if not search_conditions:
             return jsonify({"answer": "Por favor, haz una pregunta más específica.", "sources": []})
-
         planos_relevantes = base_query.filter(or_(*search_conditions)).limit(5).all()
-
         if not planos_relevantes:
             return jsonify({"answer": "No pude encontrar ningún plano que coincida con tu pregunta.", "sources": []})
 
-        # --- 3. Construcción del Prompt Multimodal ---
         model = genai.GenerativeModel("gemini-1.5-pro")
         prompt_multimodal = []
-
-        # Incorporación del historial
+        
         for turno in historial:
             rol_api = "model" if turno.get("role") == "assistant" else "user"
             prompt_multimodal.append({"role": rol_api, "parts": [turno.get("text")]})
-
-        # Añadimos la nueva pregunta del usuario con las instrucciones
+        
         prompt_multimodal.append({
             "role": "user",
             "parts": [
@@ -1307,7 +1038,6 @@ def api_ask_gemini():
                 Analiza todas las imágenes para formular tu respuesta. Si la pregunta implica comparar o unir información de varios planos, hazlo.
                 Sé extremadamente preciso. Si te preguntan por medidas, cotas o diámetros, busca los números exactos en la imagen.
                 Si no puedes encontrar la respuesta en las imágenes, indícalo claramente.
-
                 PREGUNTA ACTUAL DEL USUARIO: "{pregunta}"
                 """
             ]
@@ -1318,61 +1048,59 @@ def api_ask_gemini():
             return jsonify({"error": "Error de configuración del servidor: El almacenamiento no está disponible."}), 503
 
         documentos_procesados_ok = False
-
         app.logger.info(f"Se encontraron {len(planos_relevantes)} planos. Analizando visualmente los primeros 3.")
-
-        # ===== INICIO DEL CAMBIO IMPORTANTE =====
-        # Obtiene la ruta de Poppler desde las variables de entorno.
-        # Será 'None' en el servidor, lo cual es correcto.
-        poppler_path_local = os.getenv("POPPLER_PATH")
-        # ===== FIN DEL CAMBIO IMPORTANTE =====
-
+        
         for plano in planos_relevantes[:3]:
             try:
                 response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano.r2_object_key)
                 pdf_bytes = response["Body"].read()
-
-                # ===== INICIO DEL CAMBIO IMPORTANTE =====
-                # Pasa la ruta local a la función. Si es 'None', pdf2image buscará Poppler en el PATH del sistema.
                 imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path="/usr/bin", first_page=1, last_page=1)
-                # ===== FIN DEL CAMBIO IMPORTANTE =====
-
+                
                 if imagenes_pdf:
                     prompt_multimodal[-1]["parts"].append(f"\n\n--- INICIO ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} (Rev: {plano.revision}) ---")
                     prompt_multimodal[-1]["parts"].append(imagenes_pdf[0])
                     prompt_multimodal[-1]["parts"].append(f"--- FIN ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} ---")
-
                     documentos_procesados_ok = True
-
             except Exception as e_proc:
                 app.logger.error(f"Error procesando el plano {plano.codigo_plano} para análisis visual: {e_proc}")
 
         if not documentos_procesados_ok:
             app.logger.error("No se pudo procesar ningún documento fuente para el análisis visual.")
-            return jsonify({"error": "No se pudieron procesar los planos fuente. Pueden estar corruptos o no ser accesibles."}), 500
+            return jsonify({"error": "No se pudieron procesar los planos fuente."}), 500
 
-        # --- 4. Generación de la Respuesta ---
         chat_session = model.start_chat(history=prompt_multimodal[:-1])
         response = chat_session.send_message(prompt_multimodal[-1])
-
-        # --- 5. Envío de la Respuesta al Frontend ---
-        fuentes = [{
-            "codigo": p.codigo_plano, "revision": p.revision, 
+        respuesta_ia = response.text.strip()
+        
+        fuentes_ia = [{
+            "codigo": p.codigo_plano, "revision": p.revision,
             "descripcion": p.descripcion, "url": url_for('view_file', object_key=p.r2_object_key)
         } for p in planos_relevantes]
 
+        # --- PASO 3: GUARDAR LA NUEVA RESPUESTA EN EL CACHÉ ---
+        try:
+            nueva_pregunta_cacheada = HistorialPreguntas(
+                pregunta=pregunta,
+                respuesta=respuesta_ia,
+                fuentes=fuentes_ia
+            )
+            db.session.add(nueva_pregunta_cacheada)
+            db.session.commit()
+            app.logger.info(f"Nueva respuesta guardada en caché para: '{pregunta}'")
+        except Exception as e_cache_save:
+            app.logger.error(f"Error al guardar en el caché: {e_cache_save}")
+            db.session.rollback()
+
         return jsonify({
-            "answer": response.text.strip(),
-            "sources": fuentes
+            "answer": respuesta_ia,
+            "sources": fuentes_ia,
+            "cached": False
         })
 
     except Exception as e:
-        if "Poppler" in str(e):
-            app.logger.error(f"Error de Poppler: {e}", exc_info=True)
-            return jsonify({"error": "Error de configuración: No se encontró la dependencia 'Poppler'."}), 500
-
         app.logger.error(f"Error en API de búsqueda conversacional: {e}", exc_info=True)
         return jsonify({"error": "Ocurrió un error inesperado al procesar tu pregunta."}), 500
+
 # ----------------------------------------
 # Rutas de Administración
 # ----------------------------------------
@@ -1398,7 +1126,6 @@ def manage_dictionary():
     terminos = TerminoPersonalizado.query.order_by(TerminoPersonalizado.palabra).all()
     return render_template("manage_dictionary.html", terminos=terminos)
 
-
 @app.route("/admin/dictionary/delete/<int:term_id>", methods=["POST"])
 @login_required
 def delete_term(term_id):
@@ -1412,7 +1139,6 @@ def delete_term(term_id):
         db.session.commit()
         flash(f"Término '{palabra}' eliminado. Reinicia la aplicación para aplicar.", "info")
     return redirect(url_for("manage_dictionary"))
-
 
 @app.route("/admin/users", methods=["GET", "POST"])
 @login_required
@@ -1430,12 +1156,10 @@ def manage_users():
         form_data["username"] = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         form_data["role"] = request.form.get("role", "").strip()
-
         selected_areas = request.form.getlist("areas")
         new_areas = [area.strip() for area in request.form.get("new_areas", "").split(",") if area.strip()]
         all_selected_areas = sorted(list(set(selected_areas + new_areas)))
         
-        # Validaciones
         if not all([form_data["username"], password, form_data["role"]]):
             flash("Todos los campos son obligatorios.", "warning")
             error_in_form = True
@@ -1469,14 +1193,12 @@ def manage_users():
         current_role_creating=form_data["role"] if error_in_form else "",
     )
 
-
 @app.route("/admin/user/edit/<int:user_id>", methods=["GET", "POST"])
 @login_required
 def edit_user(user_id):
     if current_user.role != "admin":
         flash("Acceso no autorizado.", "danger")
         return redirect(url_for("index"))
-
     user_to_edit = db.session.get(User, user_id)
     if not user_to_edit:
         flash("Usuario no encontrado.", "error")
@@ -1484,7 +1206,6 @@ def edit_user(user_id):
     if user_to_edit.username == "admin" and user_to_edit.id == 1:
         flash("La cuenta principal de administrador no se puede editar.", "warning")
         return redirect(url_for("manage_users"))
-
     if request.method == "POST":
         new_role = request.form.get("role")
         new_password = request.form.get("password")
@@ -1500,7 +1221,6 @@ def edit_user(user_id):
             flash(f"Cambios guardados para '{user_to_edit.username}', incluyendo nueva contraseña.", "success")
         else:
             flash(f"Cambios guardados para '{user_to_edit.username}'. La contraseña no se modificó.", "success")
-
         db.session.commit()
         return redirect(url_for("manage_users"))
     
@@ -1513,14 +1233,12 @@ def edit_user(user_id):
         assignable_roles=assignable_roles,
     )
 
-
 @app.route("/admin/user/delete/<int:user_id>", methods=["POST"])
 @login_required
 def delete_user(user_id):
     if current_user.role != "admin":
         flash("Acceso no autorizado.", "danger")
         return redirect(url_for("index"))
-
     user_to_delete = db.session.get(User, user_id)
     if not user_to_delete:
         flash("Usuario no encontrado.", "warning")
@@ -1528,7 +1246,6 @@ def delete_user(user_id):
     if user_to_delete.id == current_user.id:
         flash("No puedes eliminar tu propia cuenta.", "danger")
         return redirect(url_for("manage_users"))
-
     try:
         username_deleted = user_to_delete.username
         db.session.delete(user_to_delete)
@@ -1537,19 +1254,14 @@ def delete_user(user_id):
     except Exception as e:
         db.session.rollback()
         flash(f"Error al eliminar el usuario: {str(e)}", "danger")
-    
     return redirect(url_for("manage_users"))
-
 
 # ==============================================================================
 # 9. INICIALIZACIÓN DE LA APLICACIÓN Y SCRIPT DE EJECUCIÓN
 # ==============================================================================
 
-# --- Bloque de inicialización de la base de datos y tareas de arranque ---
 with app.app_context():
     db.create_all()
-
-    # Cargar diccionario personalizado al arrancar
     try:
         palabras_conocidas = [t.palabra for t in TerminoPersonalizado.query.all()]
         if palabras_conocidas:
@@ -1558,7 +1270,6 @@ with app.app_context():
     except Exception as e:
         app.logger.warning(f"No se pudo cargar el diccionario personalizado (puede ser la primera ejecución): {e}")
 
-    # Crear usuario admin por defecto si no existe
     if not User.query.filter_by(username="admin").first():
         try:
             admin_user = User(username="admin", role="admin")
@@ -1569,11 +1280,9 @@ with app.app_context():
         except Exception as e:
             db.session.rollback()
             app.logger.error(f"Error creando usuario admin por defecto: {e}")
+    
+    app.logger.info("Contexto de aplicación inicializado y tablas creadas.")
 
-    app.logger.info("Contexto de aplicación inicializado.")
-
-
-# --- Punto de entrada para ejecutar el servidor ---
 if __name__ == "__main__":
     if R2_CONFIG_MISSING:
         print("\nADVERTENCIA LOCAL: Faltan configuraciones para Cloudflare R2 en tu archivo .env.")
