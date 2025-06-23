@@ -1334,7 +1334,7 @@ def api_ask_gemini():
 
                 # ===== INICIO DEL CAMBIO IMPORTANTE =====
                 # Pasa la ruta local a la función. Si es 'None', pdf2image buscará Poppler en el PATH del sistema.
-                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path=poppler_path_local, first_page=1, last_page=1)
+                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path="/usr/bin", first_page=1, last_page=1)
                 # ===== FIN DEL CAMBIO IMPORTANTE =====
 
                 if imagenes_pdf:
