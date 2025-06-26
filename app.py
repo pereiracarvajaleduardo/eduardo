@@ -232,7 +232,7 @@ class HechoPlano(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     plano_id = db.Column(db.Integer, ForeignKey('plano.id'), nullable=False, index=True)
     hecho_texto = db.Column(db.Text, nullable=False)
-    metadata = db.Column(JSONB)
+    ia_metadata = db.Column(JSONB) # <-- NOMBRE CAMBIADO
     fecha_creacion = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     plano = relationship('Plano', backref=db.backref('hechos', lazy=True, cascade="all, delete-orphan"))
 
@@ -817,7 +817,7 @@ def upload_pdf():
             for hecho_str in hechos_extraidos_ia:
                 nuevo_hecho = HechoPlano(
                     hecho_texto=hecho_str, 
-                    metadata={"model": "gemini-1.5-flash"}
+                    ia_metadata={"model": "gemini-1.5-flash"}
                 )
                 nuevo_plano.hechos.append(nuevo_hecho)
             app.logger.info(f"Guardados {len(hechos_extraidos_ia)} hechos para el plano {codigo_plano_final}.")
