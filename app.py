@@ -41,8 +41,9 @@ from PIL import Image
 # Módulos de Flask y extensiones
 # ----------------------------------------
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Index, func, or_
-from sqlalchemy.dialects.postgresql import TSVECTOR, JSONB
+from sqlalchemy import Index, func, or_, text, ForeignKey
+from sqlalchemy.dialects.postgresql import TSVECTOR, JSONB, ARRAY
+from sqlalchemy.orm import relationship
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -211,18 +212,103 @@ class TerminoPersonalizado(db.Model):
 
 class HistorialPreguntas(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    pregunta = db.Column(db.Text, nullable=False, unique=True, index=True)
+    pregunta = db.Column(db.Text, nullable=False, index=True)
+    pregunta_vector = db.Column(ARRAY(db.Float), nullable=True)
     respuesta = db.Column(db.Text, nullable=False)
-    fuentes = db.Column(JSONB) # Usamos JSONB para PostgreSQL, que es más eficiente
+    fuentes = db.Column(JSONB)
     fecha_creacion = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     contador_uso = db.Column(db.Integer, default=1)
+
+    # Para un rendimiento óptimo en la búsqueda de similitud, se recomienda pgvector en PostgreSQL.
+    # Si tienes la extensión `vector` instalada, descomenta estas líneas.
+    # __table_args__ = (
+    #     Index('idx_historial_pregunta_vector', 'pregunta_vector', postgresql_using='ivfflat', postgresql_ops={'pregunta_vector': 'vector_cosine_ops'}),
+    # )
 
     def __repr__(self):
         return f"<PreguntaCacheada ID: {self.id}>"
 
+class HechoPlano(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    plano_id = db.Column(db.Integer, ForeignKey('plano.id'), nullable=False, index=True)
+    hecho_texto = db.Column(db.Text, nullable=False)
+    metadata = db.Column(JSONB)
+    fecha_creacion = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    plano = relationship('Plano', backref=db.backref('hechos', lazy=True, cascade="all, delete-orphan"))
+
+    def __repr__(self):
+        return f"<Hecho ID: {self.id} para Plano ID: {self.plano_id}>"
+
+class FeedbackRespuesta(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    historial_id = db.Column(db.Integer, ForeignKey('historial_preguntas.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, ForeignKey('user.id'), nullable=False)
+    es_positivo = db.Column(db.Boolean, nullable=False)
+    comentario = db.Column(db.Text, nullable=True)
+    fecha_creacion = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    historial = relationship('HistorialPreguntas', backref=db.backref('feedbacks', lazy=True, cascade="all, delete-orphan"))
+    user = relationship('User')
+
+    def __repr__(self):
+        return f"<Feedback {'Positivo' if self.es_positivo else 'Negativo'} para Historial ID: {self.historial_id}>"
+
+
 #=================================================
 # FUNCIONES DE IA
 #=================================================
+def generar_embedding(texto):
+    """Genera un vector embedding para un texto dado usando la API de Gemini."""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not texto or not api_key:
+        return None
+    try:
+        result = genai.embed_content(
+            model="models/embedding-001",
+            content=texto,
+            task_type="RETRIEVAL_QUERY"
+        )
+        return result['embedding']
+    except Exception as e:
+        app.logger.error(f"Error generando embedding: {e}")
+        return None
+
+def extraer_hechos_con_ia(texto_plano):
+    """Analiza un texto de plano y extrae una lista de hechos clave."""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not texto_plano or not api_key or len(texto_plano.strip()) < 50:
+        return []
+    
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = f"""
+        Actúas como un documentalista técnico extremadamente meticuloso.
+        Analiza el siguiente texto extraído de un plano de ingeniería.
+        Tu tarea es extraer una lista de 3 a 7 "hechos" concretos y fundamentales sobre el plano.
+        Cada hecho debe ser una afirmación corta y precisa.
+        Enfócate en:
+        - El propósito principal del plano.
+        - Equipos, componentes o TAGs específicos mencionados.
+        - Materiales o dimensiones clave.
+        - Ubicaciones o áreas específicas descritas.
+
+        Responde únicamente con una lista JSON de strings.
+        Ejemplo de respuesta:
+        ["El plano detalla la disposición de tuberías en el área de bombas.", "Se especifica el uso de la bomba P-101A.", "El material de la tubería principal es Acero al Carbono A106."]
+
+        Texto a analizar:
+        ---
+        {texto_plano[:4000]}
+        ---
+        Lista JSON de hechos:
+        """
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().lstrip("```json").rstrip("```")
+        hechos = json.loads(cleaned_response)
+        return hechos if isinstance(hechos, list) else []
+    except Exception as e:
+        app.logger.error(f"Error en IA al extraer hechos: {e}")
+        return []
+
 def generar_resumen_con_ia(texto_plano, idioma="spanish"):
     api_key = os.getenv("GOOGLE_API_KEY")
     if not texto_plano or not api_key or len(texto_plano.strip()) < 100:
@@ -708,7 +794,10 @@ def upload_pdf():
         with open(temp_file_path, "rb") as f:
             texto_contenido, idioma = extraer_texto_del_archivo(f, original_filename)
         
+        # --- NUEVA LÓGICA: EXTRAER HECHOS Y DATOS CON IA ---
         informe_ia = analizar_contenido_con_ia(texto_contenido)
+        hechos_extraidos_ia = extraer_hechos_con_ia(texto_contenido)
+        
         disciplina_final, sub_disciplina_final, palabras_clave_final, resumen_final = "Sin clasificar", None, None, ""
         if informe_ia:
             disciplina_final = informe_ia.get("disciplina", "Sin clasificar")
@@ -722,6 +811,17 @@ def upload_pdf():
             idioma_documento=idioma, disciplina=disciplina_final, sub_disciplina=sub_disciplina_final,
             palabras_clave_ia=palabras_clave_final, descripcion=resumen_final
         )
+        
+        # --- NUEVA LÓGICA: GUARDAR HECHOS EN LA BASE DE CONOCIMIENTO ---
+        if hechos_extraidos_ia:
+            for hecho_str in hechos_extraidos_ia:
+                nuevo_hecho = HechoPlano(
+                    hecho_texto=hecho_str, 
+                    metadata={"model": "gemini-1.5-flash"}
+                )
+                nuevo_plano.hechos.append(nuevo_hecho)
+            app.logger.info(f"Guardados {len(hechos_extraidos_ia)} hechos para el plano {codigo_plano_final}.")
+
         db.session.add(nuevo_plano)
         db.session.flush()
         
@@ -970,7 +1070,7 @@ def ask_page():
     return render_template("ask.html")
 
 # =================================================================================
-# == RUTA /api/ask-gemini CON LÓGICA DE CACHÉ INTEGRADA ==
+# == RUTA /api/ask-gemini CON LÓGICA DE CACHÉ INTELIGENTE Y APRENDIZAJE ==
 # =================================================================================
 @app.route("/api/ask-gemini", methods=["POST"])
 @login_required
@@ -983,29 +1083,77 @@ def api_ask_gemini():
     if not os.getenv("GOOGLE_API_KEY"):
         return jsonify({"error": "La función de búsqueda conversacional no está configurada."}), 503
 
-    # --- PASO 1: REVISAR EL CACHÉ PRIMERO ---
     try:
-        pregunta_cacheada = HistorialPreguntas.query.filter_by(pregunta=pregunta).first()
-        if pregunta_cacheada:
-            app.logger.info(f"¡Cache HIT! Devolviendo respuesta guardada para: '{pregunta}'")
-            pregunta_cacheada.contador_uso += 1
-            db.session.commit()
-            return jsonify({
-                "answer": pregunta_cacheada.respuesta,
-                "sources": pregunta_cacheada.fuentes,
-                "cached": True
-            })
-    except Exception as e_cache_lookup:
-        app.logger.error(f"Error al buscar en el caché: {e_cache_lookup}")
+        pregunta_vector = generar_embedding(pregunta)
+        if pregunta_vector:
+            # Esta consulta requiere la extensión pgvector en PostgreSQL para el operador <->
+            query_similar = text("""
+                WITH ranked_questions AS (
+                    SELECT 
+                        h.id, 
+                        h.pregunta, 
+                        h.respuesta, 
+                        h.fuentes,
+                        1 - (h.pregunta_vector <=> :query_vector) AS similitud,
+                        COALESCE(SUM(CASE WHEN f.es_positivo THEN 0.05 ELSE -0.05 END), 0) AS feedback_score
+                    FROM historial_preguntas h
+                    LEFT JOIN feedback_respuesta f ON h.id = f.historial_id
+                    WHERE h.pregunta_vector IS NOT NULL
+                    GROUP BY h.id
+                )
+                SELECT id, pregunta, respuesta, fuentes, similitud + feedback_score as puntaje_final
+                FROM ranked_questions
+                ORDER BY puntaje_final DESC
+                LIMIT 1;
+            """)
+            resultado_similar = db.session.execute(query_similar, {"query_vector": str(pregunta_vector)}).fetchone()
 
-    app.logger.info(f"Cache MISS. Procesando nueva pregunta con IA: '{pregunta}'")
+            UMBRAL_SIMILITUD = 0.95
+            if resultado_similar and resultado_similar.puntaje_final >= UMBRAL_SIMILITUD:
+                fuentes_cacheadas = resultado_similar.fuentes
+                user_allowed_areas = current_user.allowed_areas
+                es_cache_valido = True
+
+                if current_user.role != 'admin':
+                    if not fuentes_cacheadas:
+                        es_cache_valido = True
+                    else:
+                        for fuente in fuentes_cacheadas:
+                            if fuente.get("area") not in user_allowed_areas:
+                                es_cache_valido = False
+                                app.logger.warning(f"Cache Hit PERMISSION DENIED. Usuario {current_user.id} no tiene acceso al área '{fuente.get('area')}' de la fuente cacheada.")
+                                break
+                
+                if es_cache_valido:
+                    app.logger.info(f"¡Cache HIT Semántico y Válido! Puntaje: {resultado_similar.puntaje_final:.2f}.")
+                    pregunta_cacheada = db.session.get(HistorialPreguntas, resultado_similar.id)
+                    pregunta_cacheada.contador_uso += 1
+                    db.session.commit()
+                    return jsonify({
+                        "answer": resultado_similar.respuesta,
+                        "sources": resultado_similar.fuentes,
+                        "cached": True,
+                        "history_id": resultado_similar.id
+                    })
+
+    except Exception as e_cache_lookup:
+        app.logger.error(f"Error buscando en caché semántico (puede que pgvector no esté instalado): {e_cache_lookup}")
+
+    app.logger.info(f"Cache MISS o inválido por permisos. Procesando nueva pregunta con IA: '{pregunta}'")
     
-    # --- PASO 2: SI NO ESTÁ EN CACHÉ, EJECUTAR LA LÓGICA NORMAL ---
     try:
+        base_query = Plano.query
+        if current_user.role != "admin":
+            user_allowed_areas = current_user.allowed_areas
+            if not user_allowed_areas:
+                app.logger.warning(f"Usuario {current_user.id} intentó buscar sin tener áreas asignadas.")
+                return jsonify({"answer": "No tienes áreas asignadas para realizar una búsqueda.", "sources": []})
+            base_query = base_query.filter(Plano.area.in_(user_allowed_areas))
+
         codigos_extraidos = extraer_codigos_tecnicos(pregunta)
         texto_natural = re.sub(r'\s*'.join(map(re.escape, codigos_extraidos)), '', pregunta, flags=re.IGNORECASE) if codigos_extraidos else pregunta
         terminos_lematizados = lematizar_texto(texto_natural, NLP_ES, "español").split()
-        base_query = Plano.query
+        
         search_conditions = []
         if terminos_lematizados or codigos_extraidos:
             query_parts = []
@@ -1017,11 +1165,14 @@ def api_ask_gemini():
         if codigos_extraidos:
             for codigo in codigos_extraidos:
                 search_conditions.append(or_(Plano.descripcion.ilike(f'%{codigo}%'), Plano.codigo_plano.ilike(f'%{codigo}%')))
+        
         if not search_conditions:
             return jsonify({"answer": "Por favor, haz una pregunta más específica.", "sources": []})
+        
         planos_relevantes = base_query.filter(or_(*search_conditions)).limit(5).all()
+        
         if not planos_relevantes:
-            return jsonify({"answer": "No pude encontrar ningún plano que coincida con tu pregunta.", "sources": []})
+            return jsonify({"answer": "No pude encontrar ningún plano que coincida con tu pregunta en tus áreas permitidas.", "sources": []})
 
         model = genai.GenerativeModel("gemini-1.5-pro")
         prompt_multimodal = []
@@ -1030,14 +1181,27 @@ def api_ask_gemini():
             rol_api = "model" if turno.get("role") == "assistant" else "user"
             prompt_multimodal.append({"role": rol_api, "parts": [turno.get("text")]})
         
+        contexto_de_hechos = ""
+        for plano in planos_relevantes:
+            if plano.hechos:
+                contexto_de_hechos += f"\nHechos conocidos sobre el plano '{plano.codigo_plano}' Rev '{plano.revision}':\n"
+                for hecho in plano.hechos:
+                    contexto_de_hechos += f"- {hecho.hecho_texto}\n"
+
         prompt_multimodal.append({
             "role": "user",
             "parts": [
                 f"""
-                Eres un ingeniero experto leyendo planos técnicos. Tu tarea es responder la pregunta del usuario basándote en un conjunto de IMÁGENES de planos que te proporciono a continuación.
-                Analiza todas las imágenes para formular tu respuesta. Si la pregunta implica comparar o unir información de varios planos, hazlo.
+                Eres un ingeniero experto leyendo planos técnicos. Tu tarea es responder la pregunta del usuario basándote en un conjunto de IMÁGENES de planos que te proporciono y en un CONTEXTO de hechos ya conocidos.
+                Analiza todas las fuentes para formular tu respuesta. Si la pregunta implica comparar o unir información de varios planos, hazlo.
                 Sé extremadamente preciso. Si te preguntan por medidas, cotas o diámetros, busca los números exactos en la imagen.
-                Si no puedes encontrar la respuesta en las imágenes, indícalo claramente.
+
+                CONTEXTO (Hechos ya extraídos de estos planos):
+                ---
+                {contexto_de_hechos if contexto_de_hechos else "No hay hechos pre-analizados para estos planos."}
+                ---
+                
+                Si no puedes encontrar la respuesta en las imágenes ni en el contexto, indícalo claramente.
                 PREGUNTA ACTUAL DEL USUARIO: "{pregunta}"
                 """
             ]
@@ -1048,13 +1212,21 @@ def api_ask_gemini():
             return jsonify({"error": "Error de configuración del servidor: El almacenamiento no está disponible."}), 503
 
         documentos_procesados_ok = False
-        app.logger.info(f"Se encontraron {len(planos_relevantes)} planos. Analizando visualmente los primeros 3.")
+        app.logger.info(f"Se encontraron {len(planos_relevantes)} planos para el usuario {current_user.id}. Analizando visualmente los primeros 3.")
         
         for plano in planos_relevantes[:3]:
             try:
                 response = s3.get_object(Bucket=R2_BUCKET_NAME, Key=plano.r2_object_key)
                 pdf_bytes = response["Body"].read()
-                imagenes_pdf = convert_from_bytes(pdf_bytes, poppler_path="/usr/bin", first_page=1, last_page=1)
+                
+                ruta_poppler = os.getenv("POPPLER_PATH_LOCAL") or "/usr/bin"
+                
+                imagenes_pdf = convert_from_bytes(
+                    pdf_bytes, 
+                    poppler_path=ruta_poppler, 
+                    first_page=1, 
+                    last_page=1
+                )
                 
                 if imagenes_pdf:
                     prompt_multimodal[-1]["parts"].append(f"\n\n--- INICIO ANÁLISIS VISUAL DE: {plano.nombre_archivo_original} (Rev: {plano.revision}) ---")
@@ -1074,19 +1246,24 @@ def api_ask_gemini():
         
         fuentes_ia = [{
             "codigo": p.codigo_plano, "revision": p.revision,
-            "descripcion": p.descripcion, "url": url_for('view_file', object_key=p.r2_object_key)
+            "descripcion": p.descripcion, "url": url_for('view_file', object_key=p.r2_object_key),
+            "area": p.area
         } for p in planos_relevantes]
 
-        # --- PASO 3: GUARDAR LA NUEVA RESPUESTA EN EL CACHÉ ---
+        history_id = None
         try:
+            vector_para_guardar = pregunta_vector if 'pregunta_vector' in locals() and pregunta_vector else generar_embedding(pregunta)
+            
             nueva_pregunta_cacheada = HistorialPreguntas(
                 pregunta=pregunta,
+                pregunta_vector=vector_para_guardar,
                 respuesta=respuesta_ia,
                 fuentes=fuentes_ia
             )
             db.session.add(nueva_pregunta_cacheada)
             db.session.commit()
-            app.logger.info(f"Nueva respuesta guardada en caché para: '{pregunta}'")
+            history_id = nueva_pregunta_cacheada.id
+            app.logger.info(f"Nueva respuesta (ID: {history_id}) y su vector guardados en caché para: '{pregunta}'")
         except Exception as e_cache_save:
             app.logger.error(f"Error al guardar en el caché: {e_cache_save}")
             db.session.rollback()
@@ -1094,12 +1271,61 @@ def api_ask_gemini():
         return jsonify({
             "answer": respuesta_ia,
             "sources": fuentes_ia,
-            "cached": False
+            "cached": False,
+            "history_id": history_id
         })
 
     except Exception as e:
         app.logger.error(f"Error en API de búsqueda conversacional: {e}", exc_info=True)
         return jsonify({"error": "Ocurrió un error inesperado al procesar tu pregunta."}), 500
+
+
+# ----------------------------------------
+# Ruta para el Feedback de la IA
+# ----------------------------------------
+@app.route("/api/feedback", methods=["POST"])
+@login_required
+def api_feedback():
+    data = request.json
+    historial_id = data.get("history_id")
+    es_positivo = data.get("is_positive")
+    comentario = data.get("comment", "")
+
+    if historial_id is None or es_positivo is None:
+        return jsonify({"status": "error", "message": "Faltan datos (history_id, is_positive)"}), 400
+    
+    # Evitar feedback duplicado del mismo usuario para la misma pregunta
+    feedback_existente = FeedbackRespuesta.query.filter_by(
+        historial_id=historial_id, 
+        user_id=current_user.id
+    ).first()
+
+    if feedback_existente:
+        # Actualizar feedback existente
+        feedback_existente.es_positivo = es_positivo
+        feedback_existente.comentario = comentario
+        feedback_existente.fecha_creacion = datetime.now(timezone.utc)
+        message = "Feedback actualizado."
+    else:
+        # Crear nuevo feedback
+        nuevo_feedback = FeedbackRespuesta(
+            historial_id=historial_id,
+            user_id=current_user.id,
+            es_positivo=es_positivo,
+            comentario=comentario
+        )
+        db.session.add(nuevo_feedback)
+        message = "Feedback guardado."
+    
+    try:
+        db.session.commit()
+        app.logger.info(f"Feedback {'positivo' if es_positivo else 'negativo'} guardado por usuario {current_user.id} para historial {historial_id}.")
+        return jsonify({"status": "success", "message": message})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error al guardar feedback: {e}")
+        return jsonify({"status": "error", "message": "No se pudo guardar el feedback."}), 500
+
 
 # ----------------------------------------
 # Rutas de Administración
